@@ -208,6 +208,14 @@ export const asyncRoutes = [
       },
 
       {
+        path: 'qu/ai-import',
+        component: () => import('@/views/qu/qu/ai-import'),
+        name: 'AiImportQu',
+        meta: { title: 'AI导入试题', noCache: true, activeMenu: '/exam/qu', roles: ['sa'] },
+        hidden: true
+      },
+
+      {
         path: 'qu/add',
         component: () => import('@/views/qu/qu/form'),
         name: 'AddQu',

@@ -27,6 +27,7 @@
             <el-input v-model="listQuery.params.content" placeholder="题目内容" style="width: 200px;" class="filter-item" />
 
             <el-button-group class="filter-item" style="float:  right">
+              <el-button v-if="isSa" size="mini" icon="el-icon-magic-stick" @click="showAiImport">AI导入</el-button>
               <el-button size="mini" icon="el-icon-upload2" @click="showImport">导入</el-button>
               <el-button size="mini" icon="el-icon-download" @click="exportExcel">导出</el-button>
             </el-button-group>
@@ -117,6 +118,12 @@ import { exportExcel, importExcel, importTemplate } from '@/api/qu/qu'
 export default {
   name: 'QuList',
   components: { RepoSelect, DataTable },
+  computed: {
+    isSa() {
+      const roles = this.$store.getters.roles || []
+      return roles.indexOf('sa') !== -1
+    }
+  },
   data() {
     return {
 
@@ -225,6 +232,10 @@ export default {
 
     showImport() {
       this.importVisible = true
+    },
+
+    showAiImport() {
+      this.$router.push({ name: 'AiImportQu' })
     },
 
     // 只是为了美化一下导入按钮

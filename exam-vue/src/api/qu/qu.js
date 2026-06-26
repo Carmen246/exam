@@ -40,3 +40,26 @@ export function importExcel(file) {
   return upload('/exam/api/qu/qu/import', file)
 }
 
+/**
+ * AI解析试题文档文本
+ * @param file
+ */
+export function parseQuestionText(file) {
+  return upload('/exam/api/qu/parse-text', file)
+}
+
+/**
+ * AI解析试题
+ * @param data
+ */
+export function parseQuestions(data) {
+  return post('/exam/api/qu/parse-questions', data)
+}
+
+/**
+ * AI确认导入试题
+ * @param data
+ */
+export function confirmQuestionImport(data) {
+  return post('/exam/api/qu/confirm-import', data)
+}
