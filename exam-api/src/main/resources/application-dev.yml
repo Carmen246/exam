@@ -6,7 +6,7 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://localhost:3306/yf_exam_lite?useSSL=false&serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&allowPublicKeyRetrieval=true
     username: root
-    password: root@123
+    password: rootroot
     # druid相关配置
     druid:
       max-active: 5000
@@ -69,3 +69,11 @@ logging:
   level:
     root: debug
   path: logs/${spring.application.name}/
+# API调用配置
+exam:
+  ai:
+    base-url: https://api.deepseek.com
+    api-key: ${DEEPSEEK_API_KEY:}
+    model-name: deepseek-v4-flash
+    timeout-seconds: 60
+    max-text-length: 20000
