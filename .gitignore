@@ -1,0 +1,16 @@
+/.idea/.gitignore
+/.idea/misc.xml
+/.idea/modules.xml
+/.idea/vcs.xml
+/.idea/yfexam-exam.iml
+# build output
+target/
+*.class
+
+# IDE files
+.idea/
+*.iml
+# logs
+logs/
+*.log
+*.log.*.gz
