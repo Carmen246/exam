@@ -70,6 +70,22 @@
               <span class="text-count">当前文本 {{ textLength }} 字</span>
               <div>
                 <el-button size="small" @click="clearSource">清空</el-button>
+                <el-button
+                  size="small"
+                  icon="el-icon-view"
+                  :disabled="!rawSourceText"
+                  @click="showRawText"
+                >
+                  查看清洗前文本
+                </el-button>
+                <el-button
+                  size="small"
+                  icon="el-icon-edit-outline"
+                  :loading="normalizeLoading"
+                  @click="handleNormalize"
+                >
+                  AI清洗文本
+                </el-button>
                 <el-button type="primary" size="small" icon="el-icon-magic-stick" :loading="parseLoading" @click="handleParse">
                   开始AI解析
                 </el-button>
@@ -126,12 +142,31 @@
         </el-col>
       </el-row>
     </el-card>
+
+    <el-dialog
+      title="清洗前文本"
+      :visible.sync="rawTextDialogVisible"
+      width="760px"
+      append-to-body
+    >
+      <el-input
+        v-model="rawSourceText"
+        type="textarea"
+        :rows="18"
+        readonly
+      />
+      <div slot="footer">
+        <el-button @click="rawTextDialogVisible = false">关闭</el-button>
+        <el-button type="primary" @click="replaceWithRawText">使用清洗前文本替换</el-button>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script>
 import RepoSelect from '@/components/RepoSelect'
 import { parseQuestionText, parseQuestions, confirmQuestionImport } from '@/api/qu/qu'
+import { post } from '@/utils/request'
 
 export default {
   name: 'AiImportQu',
@@ -139,8 +174,11 @@ export default {
   data() {
     return {
       fileLoading: false,
+      normalizeLoading: false,
       parseLoading: false,
       importLoading: false,
+      rawTextDialogVisible: false,
+      rawSourceText: '',
       fileInfo: {
         fileName: ''
       },
@@ -200,12 +238,51 @@ export default {
         this.fileInfo = {
           fileName: res.data.fileName
         }
-        this.parseForm.text = res.data.rawText || ''
+        const rawText = res.data.rawText || ''
+        this.rawSourceText = rawText
         this.questions = []
-        this.$message.success('文档解析完成，请检查文本后开始AI解析')
-        this.fileLoading = false
+        this.$message.success('文档解析完成，正在自动AI清洗文本')
+        this.normalizeTextValue(rawText).then(normalizedText => {
+          this.parseForm.text = normalizedText
+          this.$message.success('AI清洗完成，已填入清洗后的文本')
+          this.fileLoading = false
+        }, () => {
+          this.parseForm.text = rawText
+          this.$message.warning('AI清洗失败，已保留原始解析文本')
+          this.fileLoading = false
+        })
       }, () => {
         this.fileLoading = false
+      })
+    },
+
+    handleNormalize() {
+      if (!this.parseForm.text || this.parseForm.text.trim().length === 0) {
+        this.$message.warning('请先上传文件或粘贴试题文本')
+        return
+      }
+
+      this.normalizeLoading = true
+      this.rawSourceText = this.parseForm.text
+      this.normalizeTextValue(this.parseForm.text).then(normalizedText => {
+        this.parseForm.text = normalizedText
+        this.questions = []
+        this.$message.success('AI清洗完成，请检查文本后再解析')
+        this.normalizeLoading = false
+      }, () => {
+        this.normalizeLoading = false
+      })
+    },
+
+    normalizeTextValue(text) {
+      return post('/exam/api/qu/normalize-text', {
+        text: text
+      }).then(res => {
+        const data = res.data || {}
+        if (!data.normalizedText) {
+          return Promise.reject(new Error('AI未返回清洗后的文本'))
+        }
+        return data.normalizedText
       })
     },
 
@@ -276,11 +353,28 @@ export default {
       this.questions.splice(index, 1)
     },
 
+    showRawText() {
+      if (!this.rawSourceText) {
+        this.$message.warning('暂无清洗前文本')
+        return
+      }
+      this.rawTextDialogVisible = true
+    },
+
+    replaceWithRawText() {
+      this.parseForm.text = this.rawSourceText
+      this.questions = []
+      this.rawTextDialogVisible = false
+      this.$message.success('已替换为清洗前文本')
+    },
+
     clearSource() {
       this.fileInfo = {
         fileName: ''
       }
       this.parseForm.text = ''
+      this.rawSourceText = ''
+      this.rawTextDialogVisible = false
       this.questions = []
     },
 
