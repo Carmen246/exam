@@ -25,5 +25,8 @@ public class PaperQuAnswerExtDTO extends PaperQuAnswerDTO {
     @ApiModelProperty(value = "答案内容", required=true)
     private String content;
 
+    @ApiModelProperty(value = "答案解析", required=true)
+    private String analysis;
+
     
 }

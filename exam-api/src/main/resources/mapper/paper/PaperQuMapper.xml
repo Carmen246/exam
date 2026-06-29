@@ -42,13 +42,14 @@
 
         <result column="image" property="image" />
         <result column="content" property="content" />
+        <result column="analysis" property="analysis" />
         <collection property="answerList" column="{paperId=paper_id,quId=qu_id}"
                     select="com.yf.exam.modules.paper.mapper.PaperQuAnswerMapper.listForShow" />
 
     </resultMap>
 
     <select id="listByPaper" resultMap="ListResultMap">
-        SELECT pq.*,eq.content,eq.image
+        SELECT pq.*,eq.content,eq.image,eq.analysis
         FROM el_paper_qu pq
         LEFT JOIN el_qu eq ON pq.qu_id = eq.id
         WHERE pq.paper_id=#{paperId}

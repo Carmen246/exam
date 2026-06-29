@@ -14,11 +14,14 @@ import com.yf.exam.modules.paper.dto.request.PaperAnswerDTO;
 import com.yf.exam.modules.paper.dto.request.PaperCreateReqDTO;
 import com.yf.exam.modules.paper.dto.request.PaperListReqDTO;
 import com.yf.exam.modules.paper.dto.request.PaperQuQueryDTO;
+import com.yf.exam.modules.paper.dto.request.PaperRandomWordExportReqDTO;
+import com.yf.exam.modules.paper.dto.request.PaperWordExportReqDTO;
 import com.yf.exam.modules.paper.dto.response.ExamDetailRespDTO;
 import com.yf.exam.modules.paper.dto.response.ExamResultRespDTO;
 import com.yf.exam.modules.paper.dto.response.PaperListRespDTO;
 import com.yf.exam.modules.paper.entity.Paper;
 import com.yf.exam.modules.paper.service.PaperService;
+import com.yf.exam.modules.paper.service.PaperWordExportService;
 import com.yf.exam.modules.user.UserUtils;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
@@ -29,6 +32,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
+
+import javax.servlet.http.HttpServletResponse;
 
 /**
 * <p>
@@ -45,6 +50,9 @@ public class PaperController extends BaseController {
 
     @Autowired
     private PaperService baseService;
+
+    @Autowired
+    private PaperWordExportService paperWordExportService;
 
     /**
      * 分页查找
@@ -111,6 +119,18 @@ public class PaperController extends BaseController {
         //根据ID删除
         baseService.fillAnswer(reqDTO);
         return super.success();
+    }
+
+    @ApiOperation(value = "导出试卷Word")
+    @RequestMapping(value = "/export-word", method = { RequestMethod.POST})
+    public void exportWord(@RequestBody PaperWordExportReqDTO reqDTO, HttpServletResponse response) {
+        paperWordExportService.exportWord(reqDTO, response);
+    }
+
+    @ApiOperation(value = "随机抽题导出试卷Word")
+    @RequestMapping(value = "/export-random-word", method = { RequestMethod.POST})
+    public void exportRandomWord(@RequestBody PaperRandomWordExportReqDTO reqDTO, HttpServletResponse response) {
+        paperWordExportService.exportRandomWord(reqDTO, response);
     }
 
 

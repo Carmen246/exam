@@ -29,6 +29,11 @@ instance.interceptors.response.use(
   response => {
     const res = response.data
 
+    // 下载文件直接返回，避免把 Word、Excel 等 blob 当成普通 JSON 处理
+    if (response.config.responseType === 'blob') {
+      return response
+    }
+
     // 下载文件直接返回
     if (res.type === 'application/octet-stream') {
       return response
@@ -138,16 +143,19 @@ export function download(url, data, fileName) {
 
       // 文件下载
       const blob = new Blob([res.data], {
-        type: 'application/vnd.ms-excel'
+        type: res.headers['content-type'] || 'application/octet-stream'
       })
 
       // 获得文件名称
       let link = document.createElement('a')
-      link.href = URL.createObjectURL(blob)
+      const objectUrl = URL.createObjectURL(blob)
+      link.href = objectUrl
       link.setAttribute('download', fileName)
       link.click()
       link = null
+      URL.revokeObjectURL(objectUrl)
       Message.success('导出成功!')
+      resolve()
     }).catch(err => {
       loading.close()
       reject(err)

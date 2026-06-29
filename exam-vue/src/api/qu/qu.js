@@ -25,6 +25,15 @@ export function exportExcel(data) {
 }
 
 /**
+ * 随机抽题导出Word试卷
+ * @param data
+ */
+export function exportRandomWord(data) {
+  const fileName = (data.title || '随机试卷') + '.docx'
+  return download('/exam/api/paper/paper/export-random-word', data, fileName)
+}
+
+/**
  * 导入模板
  * @param data
  */

@@ -29,4 +29,7 @@ public class PaperQuDetailDTO extends PaperQuDTO {
 
     @ApiModelProperty(value = "答案内容", required=true)
     List<PaperQuAnswerExtDTO> answerList;
+
+    @ApiModelProperty(value = "整体解析", required=true)
+    private String analysis;
 }
