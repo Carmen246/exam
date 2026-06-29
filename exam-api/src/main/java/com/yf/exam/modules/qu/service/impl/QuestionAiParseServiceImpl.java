@@ -39,11 +39,11 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             "你是在线考试系统的试题解析器。你只能返回合法 json，不要返回 Markdown，不要解释，不要使用代码块。"
                     + "题型编码固定为：1=单选题，2=多选题，3=判断题。"
                     + "只解析客观题，无法确定答案的题目不要输出。"
-                    + "返回格式必须是："
-                    + "{\"questions\":[{\"quType\":1,\"level\":1,\"content\":\"题干\","
-                    + "\"analysis\":\"解析\",\"image\":\"\",\"remark\":\"\","
-                    + "\"repoIds\":[],\"answerList\":[{\"content\":\"选项内容\","
-                    + "\"isRight\":true,\"image\":\"\",\"analysis\":\"\"}]}]}";
+                  + "返回格式必须是："
+                  + "{\"questions\":[{\"quType\":1,\"level\":1,\"content\":\"题干\","
+                  + "\"analysis\":\"整体解析，说明本题考查点和正确答案依据，不能为空\",\"image\":\"\",\"remark\":\"\","
+                  + "\"repoIds\":[],\"answerList\":[{\"content\":\"选项内容\","
+                  + "\"isRight\":true,\"image\":\"\",\"analysis\":\"答案解析，说明该选项为什么正确或错误，不能为空\"}]}]}";
     private static final String NORMALIZE_SYSTEM_PROMPT =
             "你是试题文本清洗助手，负责把从 Word、PDF、OCR 或复制粘贴中抽取出的混乱试题文本整理为规范纯文本。"
                     + "要求："
@@ -104,6 +104,13 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(SystemMessage.from(SYSTEM_PROMPT));
+        messages.add(SystemMessage.from(
+                "解析题目时必须同时生成解析字段。"
+                        + "每道题的analysis字段填写整体解析，说明本题考查点、正确答案依据。"
+                        + "每个answerList元素的analysis字段填写该选项的答案解析，说明该选项为什么正确或错误。"
+                        + "如果原文已经包含解析，优先保留并整理原解析；如果原文没有解析，可以基于题干、选项和答案生成简洁解析。"
+                        + "不要改变题干、选项和正确答案，不要新增题目。"
+        ));
         messages.add(UserMessage.from(buildUserPrompt(reqDTO)));
 
         Response<AiMessage> response = getChatModel().generate(messages);
@@ -136,7 +143,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                             .apiKey(properties.getApiKey())
                             .modelName(properties.getModelName())
                             .temperature(0.1)
-                            .maxTokens(3000)
+                            .maxTokens(5000)
                             .responseFormat("json_object")
                             .timeout(Duration.ofSeconds(properties.getTimeoutSeconds()))
                             .maxRetries(1)
@@ -167,7 +174,11 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 + "4. 每道题必须包含 content、quType、answerList。\n"
                 + "5. repoIds 使用：" + JSON.toJSONString(reqDTO.getRepoIds()) + "。\n"
                 + "6. level 使用：" + (reqDTO.getLevel() == null ? 1 : reqDTO.getLevel()) + "。\n"
-                + "7. 不要编造题目，不要输出无法判断答案的题目。\n\n"
+                + "7. 必须生成整体解析：每道题的 analysis 字段不能为空，要说明本题考查点、正确答案依据。\n"
+                + "8. 必须生成答案解析：answerList 中每个选项的 analysis 字段不能为空，要说明该选项为什么正确或错误。\n"
+                + "9. 如果原文没有解析，也要根据题干、选项和答案生成简洁解析。\n"
+                + "10. 不允许把 analysis 返回为空字符串。\n"
+                + "11. 不要编造题目，不要输出无法判断答案的题目。\n\n"
                 + "原始文本：\n"
                 + reqDTO.getText();
     }
@@ -210,7 +221,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 qu.setRemark("");
             }
             if (StringUtils.isBlank(qu.getAnalysis())) {
-                qu.setAnalysis("");
+                qu.setAnalysis(buildQuestionAnalysis(qu));
             }
             if (CollectionUtils.isEmpty(qu.getRepoIds())) {
                 qu.setRepoIds(reqDTO.getRepoIds());
@@ -245,7 +256,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 answer.setImage("");
             }
             if (StringUtils.isBlank(answer.getAnalysis())) {
-                answer.setAnalysis("");
+                answer.setAnalysis(buildAnswerAnalysis(qu, answer));
             }
             if (StringUtils.isBlank(answer.getContent())) {
                 throw new ServiceException("第" + index + "题存在空选项");
@@ -267,6 +278,36 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         if (QuType.JUDGE.equals(qu.getQuType()) && rightCount != 1) {
             throw new ServiceException("第" + index + "题是判断题，但正确答案数量不是1个");
         }
+    }
+
+    private String buildQuestionAnalysis(QuDetailDTO qu) {
+        String rightAnswers = buildRightAnswerText(qu);
+        if (StringUtils.isBlank(rightAnswers)) {
+            return "本题考查相关知识点，请结合题干和选项判断。";
+        }
+        return "本题考查相关知识点，正确答案为：" + rightAnswers + "。";
+    }
+
+    private String buildAnswerAnalysis(QuDetailDTO qu, QuAnswerDTO answer) {
+        if (answer.getIsRight() != null && answer.getIsRight()) {
+            return "该选项为正确答案，符合题干要求。";
+        }
+        return "该选项不是正确答案，不符合题干要求。";
+    }
+
+    private String buildRightAnswerText(QuDetailDTO qu) {
+        if (CollectionUtils.isEmpty(qu.getAnswerList())) {
+            return "";
+        }
+
+        List<String> rightAnswers = new ArrayList<>();
+        for (int i = 0; i < qu.getAnswerList().size(); i++) {
+            QuAnswerDTO answer = qu.getAnswerList().get(i);
+            if (answer.getIsRight() != null && answer.getIsRight()) {
+                rightAnswers.add(String.valueOf((char) ('A' + i)) + "." + answer.getContent());
+            }
+        }
+        return StringUtils.join(rightAnswers, "，");
     }
     @Autowired
     private QuService quService;
@@ -319,7 +360,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             qu.setRemark("");
         }
         if (StringUtils.isBlank(qu.getAnalysis())) {
-            qu.setAnalysis("");
+            qu.setAnalysis(buildQuestionAnalysis(qu));
         }
 
         for (QuAnswerDTO answer : qu.getAnswerList()) {
@@ -330,7 +371,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 answer.setImage("");
             }
             if (StringUtils.isBlank(answer.getAnalysis())) {
-                answer.setAnalysis("");
+                answer.setAnalysis(buildAnswerAnalysis(qu, answer));
             }
         }
     }
