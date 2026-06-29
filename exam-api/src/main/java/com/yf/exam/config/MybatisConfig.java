@@ -1,5 +1,8 @@
 package com.yf.exam.config;
 
+import com.baomidou.mybatisplus.annotation.DbType;
+import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
+import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.yf.exam.aspect.mybatis.QueryInterceptor;
 import com.yf.exam.aspect.mybatis.UpdateInterceptor;
 import org.mybatis.spring.annotation.MapperScan;
@@ -15,23 +18,22 @@ import org.springframework.context.annotation.Configuration;
 @MapperScan("com.yf.exam.modules.**.mapper")
 public class MybatisConfig {
 
-    /**
-     * 数据查询过滤器
-     */
     @Bean
-    public QueryInterceptor queryInterceptor() {
-        QueryInterceptor query =  new QueryInterceptor();
-        query.setLimit(-1L);
-        return query;
+    public MybatisPlusInterceptor mybatisPlusInterceptor() {
+        MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
+        PaginationInnerInterceptor paginationInnerInterceptor = new PaginationInnerInterceptor(DbType.MYSQL);
+        paginationInnerInterceptor.setMaxLimit(-1L);
+        interceptor.addInnerInterceptor(paginationInnerInterceptor);
+        return interceptor;
     }
 
-    /**
-     * 插入数据过滤器
-     */
+    @Bean
+    public QueryInterceptor queryInterceptor() {
+        return new QueryInterceptor();
+    }
+
     @Bean
     public UpdateInterceptor updateInterceptor() {
         return new UpdateInterceptor();
     }
-
-
 }

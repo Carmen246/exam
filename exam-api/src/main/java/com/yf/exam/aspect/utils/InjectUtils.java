@@ -85,6 +85,7 @@ public class InjectUtils {
 
             //固定错误
             ApiRest apiRest = new ApiRest(ApiError.ERROR_10010002);
+            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             response.setCharacterEncoding("UTF-8");
             response.setContentType("application/json");
             response.getWriter().write(JSON.toJSONString(apiRest));

@@ -31,13 +31,15 @@ const actions = {
   },
   // 获取网站配置信息
   getSite({ commit }) {
-    return new Promise((resolve, reject) => {
-      fetchDetail({}).then(response => {
+    return new Promise((resolve) => {
+      fetchDetail().then(response => {
         const { data } = response
         commit('SET_SITE_DATA', data)
         resolve(data)
-      }).catch(error => {
-        reject(error)
+      }).catch(() => {
+        const fallback = { siteName: defaultSettings.title }
+        commit('SET_SITE_DATA', fallback)
+        resolve(fallback)
       })
     })
   }

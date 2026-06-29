@@ -136,8 +136,6 @@
                 <div v-if="item.analysis" class="analysis">
                   整体解析：{{ item.analysis }}
                 </div>
-
-                <div v-if="item.analysis" class="analysis">解析：{{ item.analysis }}</div>
               </div>
             </div>
 

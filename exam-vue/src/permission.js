@@ -14,7 +14,7 @@ router.beforeEach(async(to, from, next) => {
   // start progress bar
   NProgress.start()
 
-  // 获取网站基本信息
+  // 获取网站基本信息（失败时 store 内已有默认标题兜底）
   let siteData = store.getters.siteData
   if (!siteData.siteName) {
     siteData = await store.dispatch('settings/getSite')

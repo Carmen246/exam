@@ -5,6 +5,9 @@ spring:
       active: dev
   main:
     allow-bean-definition-overriding: true
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
 server:
   port: 8101
   # 启用服务端压缩

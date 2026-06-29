@@ -1,6 +1,7 @@
 package com.yf.exam.ability.shiro.aop;
 
 
+import com.yf.exam.ability.shiro.AnonPathUtils;
 import com.yf.exam.ability.shiro.jwt.JwtToken;
 import com.yf.exam.aspect.utils.InjectUtils;
 import com.yf.exam.modules.Constant;
@@ -28,11 +29,15 @@ public class JwtFilter extends BasicHttpAuthenticationFilter {
 	 */
 	@Override
 	protected boolean isAccessAllowed(ServletRequest request, ServletResponse response, Object mappedValue) {
+		HttpServletRequest httpRequest = (HttpServletRequest) request;
+		if (AnonPathUtils.isAnonPath(httpRequest)) {
+			return true;
+		}
+		log.warn("JWT auth required for path: {}", AnonPathUtils.resolvePath(httpRequest));
 		try {
 			executeLogin(request, response);
 			return true;
 		} catch (Exception e) {
-			// 写出统一错误信息
 			InjectUtils.restError((HttpServletResponse) response);
 			return false;
 		}

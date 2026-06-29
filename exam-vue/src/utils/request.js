@@ -4,6 +4,17 @@ import { Loading } from 'element-ui'
 import store from '@/store'
 import { getToken } from '@/utils/auth'
 
+const AUTH_WHITE_PATHS = ['/login', '/register']
+
+function isSilent(config) {
+  return config && config.silent === true
+}
+
+function isAuthWhitePage() {
+  const hash = window.location.hash || ''
+  return AUTH_WHITE_PATHS.some(path => hash.includes(path))
+}
+
 // 请求实例
 const instance = axios.create({
   baseURL: process.env.VUE_APP_BASE_API,
@@ -45,15 +56,17 @@ instance.interceptors.response.use(
 
     // 0为正确响应码
     if (res.code !== 0) {
-      Message({
-        message: res.msg || 'Error',
-        type: 'error',
-        duration: 5 * 1000
-      })
+      const silent = isSilent(response.config)
+      if (!silent) {
+        Message({
+          message: res.msg || 'Error',
+          type: 'error',
+          duration: 5 * 1000
+        })
+      }
 
-      // 登录超时响应码
-      if (res.code === 10010002) {
-        // to re-login
+      // 登录超时响应码（登录/注册页不弹重新登录框）
+      if (res.code === 10010002 && !silent && !isAuthWhitePage()) {
         MessageBox.confirm('登录超时，请重新登录！', '登录提示', {
           confirmButtonText: '重新登录',
           cancelButtonText: '取消',
@@ -71,14 +84,29 @@ instance.interceptors.response.use(
   },
   error => {
     console.log('err' + error)
-    Message({
-      message: error.message,
-      type: 'error',
-      duration: 5 * 1000
-    })
+    if (!isSilent(error.config)) {
+      Message({
+        message: error.message,
+        type: 'error',
+        duration: 5 * 1000
+      })
+    }
     return Promise.reject(error)
   }
 )
+
+async function parseBlobError(blob) {
+  try {
+    const text = await blob.text()
+    const json = JSON.parse(text)
+    if (json && typeof json.code !== 'undefined') {
+      return json.msg || '下载失败'
+    }
+  } catch (e) {
+    // 非 JSON 错误体，按正常文件处理
+  }
+  return null
+}
 
 /**
  * 上传
@@ -138,13 +166,30 @@ export function download(url, data, fileName) {
       data: data,
       timeout: 1200000,
       responseType: 'blob'
-    }).then(res => {
+    }).then(async res => {
       loading.close()
+
+      const contentType = res.headers['content-type'] || ''
+      if (contentType.includes('application/json')) {
+        const msg = await parseBlobError(res.data)
+        Message.error(msg || '下载失败')
+        reject(new Error(msg || '下载失败'))
+        return
+      }
 
       // 文件下载
       const blob = new Blob([res.data], {
-        type: res.headers['content-type'] || 'application/octet-stream'
+        type: contentType || 'application/octet-stream'
       })
+
+      if (blob.size < 2048) {
+        const msg = await parseBlobError(blob)
+        if (msg) {
+          Message.error(msg)
+          reject(new Error(msg))
+          return
+        }
+      }
 
       // 获得文件名称
       let link = document.createElement('a')
@@ -169,9 +214,9 @@ export function download(url, data, fileName) {
  * @param data
  * @returns {Promise}
  */
-export function post(url, data = {}) {
+export function post(url, data = {}, config = {}) {
   return new Promise((resolve, reject) => {
-    instance.post(url, data)
+    instance.post(url, data, config)
       .then(response => {
         resolve(response)
       }, err => {

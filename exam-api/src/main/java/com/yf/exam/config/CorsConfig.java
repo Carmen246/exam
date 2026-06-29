@@ -23,7 +23,8 @@ public class CorsConfig {
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowCredentials(true);
-        config.addAllowedOrigin(CorsConfiguration.ALL);
+        // Spring Boot 2.7+ 开启 credentials 时不能用 allowedOrigins("*")，改用 originPatterns
+        config.addAllowedOriginPattern(CorsConfiguration.ALL);
         config.addAllowedHeader(CorsConfiguration.ALL);
         config.addAllowedMethod(CorsConfiguration.ALL);
         source.registerCorsConfiguration("/**", config);

@@ -78,9 +78,6 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
     private QuAnswerService quAnswerService;
 
     @Autowired
-    private PaperService paperService;
-
-    @Autowired
     private PaperQuService paperQuService;
 
     @Autowired
@@ -120,7 +117,7 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
                 .eq(Paper::getUserId, userId)
                 .eq(Paper::getState, PaperState.ING);
 
-        int exists = this.count(wrapper);
+        long exists = this.count(wrapper);
 
 
         if (exists > 0) {
@@ -162,7 +159,7 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
         ExamDetailRespDTO respDTO = new ExamDetailRespDTO();
 
         // 试题基本信息
-        Paper paper = paperService.getById(paperId);
+        Paper paper = this.getById(paperId);
         BeanMapper.copy(paper, respDTO);
 
         // 查找题目列表
@@ -195,7 +192,7 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
         ExamResultRespDTO respDTO = new ExamResultRespDTO();
 
         // 试题基本信息
-        Paper paper = paperService.getById(paperId);
+        Paper paper = this.getById(paperId);
         BeanMapper.copy(paper, respDTO);
 
         List<PaperQuDetailDTO> quList = paperQuService.listForPaperResult(paperId);
@@ -351,7 +348,7 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
         cl.add(Calendar.MINUTE, exam.getTotalTime());
         paper.setLimitTime(cl.getTime());
 
-        paperService.save(paper);
+        this.save(paper);
 
         if (!CollectionUtils.isEmpty(quList)) {
             this.savePaperQu(paper.getId(), quList);
@@ -461,7 +458,7 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
     public void handExam(String paperId) {
 
         //获取试卷信息
-        Paper paper = paperService.getById(paperId);
+        Paper paper = this.getById(paperId);
 
         //如果不是正常的，抛出异常
         if(!PaperState.ING.equals(paper.getState())){
@@ -498,7 +495,7 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
         paper.setUserTime(userTime);
 
         //更新试卷
-        paperService.updateById(paper);
+        this.updateById(paper);
 
 
         // 终止定时任务

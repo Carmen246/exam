@@ -15,23 +15,36 @@ import com.yf.exam.modules.qu.enums.QuType;
 import com.yf.exam.modules.qu.service.QuAnswerService;
 import com.yf.exam.modules.qu.service.QuService;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
-import org.apache.poi.xwpf.usermodel.XWPFDocument;
-import org.apache.poi.xwpf.usermodel.XWPFParagraph;
-import org.apache.poi.xwpf.usermodel.XWPFRun;
+import org.docx4j.jaxb.Context;
+import org.docx4j.openpackaging.packages.WordprocessingMLPackage;
+import org.docx4j.openpackaging.parts.WordprocessingML.MainDocumentPart;
+import org.docx4j.wml.BooleanDefaultTrue;
+import org.docx4j.wml.HpsMeasure;
+import org.docx4j.wml.Jc;
+import org.docx4j.wml.JcEnumeration;
+import org.docx4j.wml.ObjectFactory;
+import org.docx4j.wml.P;
+import org.docx4j.wml.PPr;
+import org.docx4j.wml.R;
+import org.docx4j.wml.RPr;
+import org.docx4j.wml.Text;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 
 import javax.servlet.ServletOutputStream;
 import javax.servlet.http.HttpServletResponse;
-import java.io.IOException;
+import java.math.BigInteger;
 import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.List;
 
 @Service
 public class PaperWordExportServiceImpl implements PaperWordExportService {
+
+    private static final int FONT_TITLE = 36;
+    private static final int FONT_SECTION = 26;
+    private static final int FONT_NORMAL = 22;
 
     @Autowired
     private PaperService paperService;
@@ -61,13 +74,13 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
             throw new ServiceException("试卷中没有试题，无法导出！");
         }
 
-        XWPFDocument document = new XWPFDocument();
         try {
+            WordprocessingMLPackage document = WordprocessingMLPackage.createPackage();
             writePaper(document, paper.getTitle(), paper.getTotalScore(), paper.getTotalTime(), quList,
                     Boolean.TRUE.equals(reqDTO.getIncludeAnswer()),
                     Boolean.TRUE.equals(reqDTO.getIncludeAnalysis()));
             writeResponse(document, paper.getTitle(), response);
-        } catch (IOException e) {
+        } catch (Exception e) {
             throw new ServiceException("试卷Word导出失败：" + e.getMessage());
         }
     }
@@ -81,14 +94,14 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
             throw new ServiceException("没有抽取到试题，无法导出！");
         }
 
-        XWPFDocument document = new XWPFDocument();
         try {
+            WordprocessingMLPackage document = WordprocessingMLPackage.createPackage();
             String title = StringUtils.defaultIfBlank(reqDTO.getTitle(), "随机试卷");
             writePaper(document, title, calculateTotalScore(quList), reqDTO.getTotalTime(), quList,
                     Boolean.TRUE.equals(reqDTO.getIncludeAnswer()),
                     Boolean.TRUE.equals(reqDTO.getIncludeAnalysis()));
             writeResponse(document, title, response);
-        } catch (IOException e) {
+        } catch (Exception e) {
             throw new ServiceException("随机试卷Word导出失败：" + e.getMessage());
         }
     }
@@ -224,30 +237,32 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
         return String.valueOf((char) ('A' + index));
     }
 
-    private void writePaper(XWPFDocument document, String title, Integer totalScore, Integer totalTime, List<PaperQuDetailDTO> quList,
-                            boolean includeAnswer, boolean includeAnalysis) {
+    private void writePaper(WordprocessingMLPackage document, String title, Integer totalScore, Integer totalTime,
+                            List<PaperQuDetailDTO> quList, boolean includeAnswer, boolean includeAnalysis) throws Exception {
+        MainDocumentPart main = document.getMainDocumentPart();
+        ObjectFactory factory = Context.getWmlObjectFactory();
 
-        addTitle(document, StringUtils.defaultIfBlank(title, "试卷"));
-        addMetaLine(document, totalScore, totalTime);
-        addBlankLine(document);
+        addParagraph(main, factory, StringUtils.defaultIfBlank(title, "试卷"), true, true, FONT_TITLE);
+        addMetaLine(main, factory, totalScore, totalTime);
+        addBlankLine(main, factory);
 
         List<PaperQuDetailDTO> radioList = filterByType(quList, QuType.RADIO);
         List<PaperQuDetailDTO> multiList = filterByType(quList, QuType.MULTI);
         List<PaperQuDetailDTO> judgeList = filterByType(quList, QuType.JUDGE);
 
         int index = 1;
-        index = addQuestionSection(document, "一、单选题", radioList, index);
-        index = addQuestionSection(document, "二、多选题", multiList, index);
-        addQuestionSection(document, "三、判断题", judgeList, index);
+        index = addQuestionSection(main, factory, "一、单选题", radioList, index);
+        index = addQuestionSection(main, factory, "二、多选题", multiList, index);
+        addQuestionSection(main, factory, "三、判断题", judgeList, index);
 
         if (includeAnswer) {
-            addBlankLine(document);
-            addAnswerSection(document, quList);
+            addBlankLine(main, factory);
+            addAnswerSection(main, factory, quList);
         }
 
         if (includeAnalysis) {
-            addBlankLine(document);
-            addAnalysisSection(document, quList);
+            addBlankLine(main, factory);
+            addAnalysisSection(main, factory, quList);
         }
     }
 
@@ -261,7 +276,8 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
         return result;
     }
 
-    private int addQuestionSection(XWPFDocument document, String title, List<PaperQuDetailDTO> list, int startIndex) {
+    private int addQuestionSection(MainDocumentPart main, ObjectFactory factory, String title,
+                                   List<PaperQuDetailDTO> list, int startIndex) throws Exception {
         if (CollectionUtils.isEmpty(list)) {
             return startIndex;
         }
@@ -273,51 +289,53 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
             }
         }
 
-        addSectionTitle(document, title + "（共" + list.size() + "题，共" + totalScore + "分）");
+        addParagraph(main, factory, title + "（共" + list.size() + "题，共" + totalScore + "分）", true, false, FONT_SECTION);
 
         int index = startIndex;
         for (PaperQuDetailDTO qu : list) {
             String scoreText = qu.getScore() == null ? "" : "（" + qu.getScore() + "分）";
-            addTextLine(document, index + ". " + clean(qu.getContent()) + scoreText, true);
+            addParagraph(main, factory, index + ". " + clean(qu.getContent()) + scoreText, true, false, FONT_NORMAL);
 
             if (!CollectionUtils.isEmpty(qu.getAnswerList())) {
                 for (PaperQuAnswerExtDTO answer : qu.getAnswerList()) {
-                    addTextLine(document, "    " + clean(answer.getAbc()) + ". " + clean(answer.getContent()), false);
+                    addParagraph(main, factory, "    " + clean(answer.getAbc()) + ". " + clean(answer.getContent()),
+                            false, false, FONT_NORMAL);
                 }
             }
-            addBlankLine(document);
+            addBlankLine(main, factory);
             index++;
         }
         return index;
     }
 
-    private void addAnswerSection(XWPFDocument document, List<PaperQuDetailDTO> quList) {
-        addSectionTitle(document, "参考答案");
+    private void addAnswerSection(MainDocumentPart main, ObjectFactory factory, List<PaperQuDetailDTO> quList) throws Exception {
+        addParagraph(main, factory, "参考答案", true, false, FONT_SECTION);
         int index = 1;
         for (PaperQuDetailDTO qu : quList) {
-            addTextLine(document, index + ". " + buildRightAnswer(qu), false);
+            addParagraph(main, factory, index + ". " + buildRightAnswer(qu), false, false, FONT_NORMAL);
             index++;
         }
     }
 
-    private void addAnalysisSection(XWPFDocument document, List<PaperQuDetailDTO> quList) {
-        addSectionTitle(document, "答案解析");
+    private void addAnalysisSection(MainDocumentPart main, ObjectFactory factory, List<PaperQuDetailDTO> quList) throws Exception {
+        addParagraph(main, factory, "答案解析", true, false, FONT_SECTION);
         int index = 1;
         for (PaperQuDetailDTO qu : quList) {
-            addTextLine(document, index + ". " + clean(qu.getContent()), true);
+            addParagraph(main, factory, index + ". " + clean(qu.getContent()), true, false, FONT_NORMAL);
 
             if (StringUtils.isNotBlank(qu.getAnalysis())) {
-                addTextLine(document, "    整体解析：" + clean(qu.getAnalysis()), false);
+                addParagraph(main, factory, "    整体解析：" + clean(qu.getAnalysis()), false, false, FONT_NORMAL);
             }
 
             if (!CollectionUtils.isEmpty(qu.getAnswerList())) {
                 for (PaperQuAnswerExtDTO answer : qu.getAnswerList()) {
                     if (StringUtils.isNotBlank(answer.getAnalysis())) {
-                        addTextLine(document, "    " + clean(answer.getAbc()) + ". " + clean(answer.getAnalysis()), false);
+                        addParagraph(main, factory, "    " + clean(answer.getAbc()) + ". " + clean(answer.getAnalysis()),
+                                false, false, FONT_NORMAL);
                     }
                 }
             }
-            addBlankLine(document);
+            addBlankLine(main, factory);
             index++;
         }
     }
@@ -336,16 +354,7 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
         return StringUtils.join(rightAnswers, "、");
     }
 
-    private void addTitle(XWPFDocument document, String text) {
-        XWPFParagraph paragraph = document.createParagraph();
-        paragraph.setAlignment(ParagraphAlignment.CENTER);
-        XWPFRun run = paragraph.createRun();
-        run.setBold(true);
-        run.setFontSize(18);
-        run.setText(text);
-    }
-
-    private void addMetaLine(XWPFDocument document, Integer totalScore, Integer totalTime) {
+    private void addMetaLine(MainDocumentPart main, ObjectFactory factory, Integer totalScore, Integer totalTime) throws Exception {
         StringBuilder builder = new StringBuilder();
         builder.append("姓名：__________    班级：__________    得分：__________");
         if (totalScore != null) {
@@ -354,35 +363,51 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
         if (totalTime != null) {
             builder.append("    时间：").append(totalTime).append("分钟");
         }
-
-        XWPFParagraph paragraph = document.createParagraph();
-        paragraph.setAlignment(ParagraphAlignment.CENTER);
-        XWPFRun run = paragraph.createRun();
-        run.setFontSize(11);
-        run.setText(builder.toString());
+        addParagraph(main, factory, builder.toString(), false, true, FONT_NORMAL);
     }
 
-    private void addSectionTitle(XWPFDocument document, String text) {
-        XWPFParagraph paragraph = document.createParagraph();
-        XWPFRun run = paragraph.createRun();
-        run.setBold(true);
-        run.setFontSize(13);
-        run.setText(text);
+    private void addParagraph(MainDocumentPart main, ObjectFactory factory, String text,
+                              boolean bold, boolean centered, int fontSizeHalfPoints) throws Exception {
+        P paragraph = factory.createP();
+
+        if (centered) {
+            PPr pPr = factory.createPPr();
+            Jc jc = factory.createJc();
+            jc.setVal(JcEnumeration.CENTER);
+            pPr.setJc(jc);
+            paragraph.setPPr(pPr);
+        }
+
+        R run = factory.createR();
+        if (bold || fontSizeHalfPoints > 0) {
+            RPr rPr = factory.createRPr();
+            if (bold) {
+                BooleanDefaultTrue boldFlag = factory.createBooleanDefaultTrue();
+                boldFlag.setVal(true);
+                rPr.setB(boldFlag);
+            }
+            if (fontSizeHalfPoints > 0) {
+                HpsMeasure size = factory.createHpsMeasure();
+                size.setVal(BigInteger.valueOf(fontSizeHalfPoints));
+                rPr.setSz(size);
+                rPr.setSzCs(size);
+            }
+            run.setRPr(rPr);
+        }
+
+        Text textNode = factory.createText();
+        textNode.setValue(text);
+        textNode.setSpace("preserve");
+        run.getContent().add(textNode);
+        paragraph.getContent().add(run);
+        main.addObject(paragraph);
     }
 
-    private void addTextLine(XWPFDocument document, String text, boolean bold) {
-        XWPFParagraph paragraph = document.createParagraph();
-        XWPFRun run = paragraph.createRun();
-        run.setBold(bold);
-        run.setFontSize(11);
-        run.setText(text);
+    private void addBlankLine(MainDocumentPart main, ObjectFactory factory) throws Exception {
+        addParagraph(main, factory, "", false, false, 0);
     }
 
-    private void addBlankLine(XWPFDocument document) {
-        document.createParagraph();
-    }
-
-    private void writeResponse(XWPFDocument document, String title, HttpServletResponse response) throws IOException {
+    private void writeResponse(WordprocessingMLPackage document, String title, HttpServletResponse response) throws Exception {
         String fileName = StringUtils.defaultIfBlank(title, "试卷") + ".docx";
         String encodedFileName = URLEncoder.encode(fileName, "UTF-8").replaceAll("\\+", "%20");
 
@@ -393,7 +418,7 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
 
         ServletOutputStream outputStream = response.getOutputStream();
         try {
-            document.write(outputStream);
+            document.save(outputStream);
             outputStream.flush();
         } finally {
             outputStream.close();

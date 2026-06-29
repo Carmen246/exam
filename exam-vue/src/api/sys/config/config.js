@@ -1,8 +1,8 @@
 import { post } from '@/utils/request'
 
-// 获得用户协议详情，固定ID为0
+// 获得站点配置（启动时静默加载，失败不弹 toast）
 export function fetchDetail() {
-  return post('/exam/api/sys/config/detail', { id: '1' })
+  return post('/exam/api/sys/config/detail', { id: '1' }, { silent: true })
 }
 
 export function saveData(data) {

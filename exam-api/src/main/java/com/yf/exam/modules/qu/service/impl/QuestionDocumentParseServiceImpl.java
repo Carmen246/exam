@@ -2,19 +2,21 @@ package com.yf.exam.modules.qu.service.impl;
 
 import com.yf.exam.core.exception.ServiceException;
 import com.yf.exam.modules.qu.service.QuestionDocumentParseService;
+import dev.langchain4j.data.document.Document;
+import dev.langchain4j.data.document.parser.apache.poi.ApachePoiDocumentParser;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.poi.xwpf.usermodel.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
 @Service
 public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseService {
+
+    private final ApachePoiDocumentParser documentParser = new ApachePoiDocumentParser();
 
     @Override
     public String parseText(MultipartFile file) {
@@ -31,7 +33,8 @@ public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseSe
 
         try {
             if ("docx".equalsIgnoreCase(ext)) {
-                return parseDocx(file.getInputStream());
+                Document document = documentParser.parse(file.getInputStream());
+                return cleanQuestionText(document.text());
             }
 
             if ("txt".equalsIgnoreCase(ext)) {
@@ -41,38 +44,6 @@ public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseSe
             throw new ServiceException("暂只支持 docx、txt 文件！");
         } catch (Exception e) {
             throw new ServiceException("试题文档解析失败：" + e.getMessage());
-        }
-    }
-
-    private String parseDocx(InputStream inputStream) throws Exception {
-        StringBuilder text = new StringBuilder();
-
-        try {
-            XWPFDocument document = new XWPFDocument(inputStream);
-
-            for (XWPFParagraph paragraph : document.getParagraphs()) {
-                appendLine(text, paragraph.getText());
-            }
-
-            for (XWPFTable table : document.getTables()) {
-                for (XWPFTableRow row : table.getRows()) {
-                    for (XWPFTableCell cell : row.getTableCells()) {
-                        appendLine(text, cell.getText());
-                    }
-                }
-            }
-
-            return cleanQuestionText(text.toString());
-        } finally {
-            if (inputStream != null) {
-                inputStream.close();
-            }
-        }
-    }
-
-    private void appendLine(StringBuilder builder, String line) {
-        if (StringUtils.isNotBlank(line)) {
-            builder.append(line).append("\n");
         }
     }
 

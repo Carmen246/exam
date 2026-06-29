@@ -32,11 +32,11 @@ spring:
             drop-table-allow: false
             truncate-allow: false
 
-  # 定时任务配置
+  # 定时任务配置（Spring Boot 2.7 使用 LocalDataSourceJobStore，勿手动指定 JobStoreTX）
   quartz:
-    # 数据库方式
     job-store-type: jdbc
-    # quartz 相关属性配置
+    jdbc:
+      initialize-schema: never
     properties:
       org:
         quartz:
@@ -44,17 +44,12 @@ spring:
             instanceName: examScheduler
             instanceId: AUTO
           jobStore:
-            class: org.quartz.impl.jdbcjobstore.JobStoreTX
-            driverDelegateClass: org.quartz.impl.jdbcjobstore.StdJDBCDelegate
             tablePrefix: QRTZ_
             isClustered: true
             clusterCheckinInterval: 10000
-            useProperties: false
           threadPool:
-            class: org.quartz.simpl.SimpleThreadPool
             threadCount: 10
             threadPriority: 5
-            threadsInheritContextClassLoaderOfInitializingThread: true
 
 server:
   port: 8101

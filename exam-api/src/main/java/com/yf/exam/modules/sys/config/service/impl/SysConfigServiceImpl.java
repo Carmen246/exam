@@ -28,7 +28,11 @@ public class SysConfigServiceImpl extends ServiceImpl<SysConfigMapper, SysConfig
 
         SysConfig entity = this.getOne(wrapper, false);
         SysConfigDTO dto = new SysConfigDTO();
-        BeanMapper.copy(entity, dto);
+        if (entity != null) {
+            BeanMapper.copy(entity, dto);
+        } else {
+            dto.setSiteName("云帆在线培训考试系统");
+        }
         return dto;
     }
 }

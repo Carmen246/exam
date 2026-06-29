@@ -189,7 +189,7 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
         QueryWrapper<SysUser> wrapper = new QueryWrapper<>();
         wrapper.lambda().eq(SysUser::getUserName, reqDTO.getUserName());
 
-        int count = this.count(wrapper);
+        long count = this.count(wrapper);
 
         if(count > 0){
             throw new ServiceException(1, "用户名已存在，换一个吧！");
