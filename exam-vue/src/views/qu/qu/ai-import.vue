@@ -115,17 +115,26 @@
                   <el-button type="text" class="danger-link" @click="removeQuestion(index)">删除</el-button>
                 </div>
 
+
                 <div class="answer-list">
                   <div
                     v-for="(answer, answerIndex) in item.answerList"
-                    :key="answerIndex"
-                    class="answer-item"
-                    :class="{ right: answer.isRight }"
+                  :key="answerIndex"
+                 class="answer-item"
+                  :class="{ right: answer.isRight }"
                   >
                     <span class="answer-prefix">{{ optionLabel(answerIndex) }}.</span>
-                    <span>{{ answer.content }}</span>
+                    <span class="answer-content">{{ answer.content }}</span>
                     <el-tag v-if="answer.isRight" size="mini" type="success">正确</el-tag>
+
+                    <div v-if="answer.analysis" class="answer-analysis">
+                      答案解析：{{ answer.analysis }}
+                    </div>
                   </div>
+                </div>
+
+                <div v-if="item.analysis" class="analysis">
+                  整体解析：{{ item.analysis }}
                 </div>
 
                 <div v-if="item.analysis" class="analysis">解析：{{ item.analysis }}</div>
@@ -528,6 +537,7 @@ export default {
 
 .answer-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   min-height: 28px;
   color: #606266;
@@ -539,9 +549,17 @@ export default {
   font-weight: 600;
 }
 
-.answer-prefix {
-  width: 18px;
+.answer-content {
+  flex: 1;
+  min-width: 120px;
+}
+
+.answer-analysis {
+  flex-basis: 100%;
+  margin-left: 26px;
   color: #909399;
+  font-size: 12px;
+  line-height: 20px;
 }
 
 .analysis {
