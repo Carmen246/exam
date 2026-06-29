@@ -25,6 +25,8 @@ import com.yf.exam.modules.qu.dto.QuestionImportRespDTO;
 import com.yf.exam.modules.qu.service.QuService;
 import com.yf.exam.modules.repo.service.RepoService;
 import org.springframework.transaction.annotation.Transactional;
+import com.yf.exam.modules.qu.dto.QuestionNormalizeTextReqDTO;
+import com.yf.exam.modules.qu.dto.QuestionNormalizeTextRespDTO;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -42,11 +44,59 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     + "\"analysis\":\"解析\",\"image\":\"\",\"remark\":\"\","
                     + "\"repoIds\":[],\"answerList\":[{\"content\":\"选项内容\","
                     + "\"isRight\":true,\"image\":\"\",\"analysis\":\"\"}]}]}";
+    private static final String NORMALIZE_SYSTEM_PROMPT =
+            "你是试题文本清洗助手，负责把从 Word、PDF、OCR 或复制粘贴中抽取出的混乱试题文本整理为规范纯文本。"
+                    + "要求："
+                    + "1. 只整理格式，不解答试题，不改变原答案。"
+                    + "2. 不新增题目、选项、答案、解析。"
+                    + "3. 合并被 Word 排版拆散的题干、选项、答案。"
+                    + "4. 删除无意义空行、制表符、多余空格。"
+                    + "5. 题号统一为：1. 题干。"
+                    + "6. 选项统一为：A. 选项内容。"
+                    + "7. 答案统一为：答案：A 或 答案：ABD。"
+                    + "8. 如果选项末尾出现与选项顺序一致的排版残留数字，例如 A. 编程语言1、B. 数据库2、C. 操作系统3、D. 浏览器4，删除这些尾部数字。"
+                    + "9. 如果数字属于选项含义，例如 Java 8、HTTP 404、2的倍数，必须保留。"
+                    + "10. 只返回合法 JSON，不要返回 Markdown，不要解释。"
+                    + "返回格式必须是：{\"normalizedText\":\"整理后的试题文本\"}";
 
     @Autowired
     private QuestionAiProperties properties;
 
     private volatile ChatLanguageModel chatModel;
+
+    @Override
+    public QuestionNormalizeTextRespDTO normalizeText(QuestionNormalizeTextReqDTO reqDTO) {
+        if (reqDTO == null || StringUtils.isBlank(reqDTO.getText())) {
+            throw new ServiceException("待清洗文本不能为空");
+        }
+
+        if (properties.getMaxTextLength() != null
+                && reqDTO.getText().length() > properties.getMaxTextLength()) {
+            throw new ServiceException("文本过长，请拆分后再清洗");
+        }
+
+        List<ChatMessage> messages = new ArrayList<>();
+        messages.add(SystemMessage.from(NORMALIZE_SYSTEM_PROMPT));
+        messages.add(UserMessage.from("待清洗试题文本：\n" + reqDTO.getText()));
+
+        Response<AiMessage> response = getChatModel().generate(messages);
+        String answer = response.content().text();
+        String json = extractJson(answer);
+
+        QuestionNormalizeTextRespDTO respDTO;
+        try {
+            respDTO = JSON.parseObject(json, QuestionNormalizeTextRespDTO.class);
+        } catch (Exception e) {
+            throw new ServiceException("AI清洗返回内容不是合法JSON：" + answer);
+        }
+
+        if (respDTO == null || StringUtils.isBlank(respDTO.getNormalizedText())) {
+            throw new ServiceException("AI未返回清洗后的文本");
+        }
+
+        respDTO.setRawText(reqDTO.getText());
+        return respDTO;
+    }
 
     @Override
     public QuestionParseRespDTO parseQuestions(QuestionParseReqDTO reqDTO) {

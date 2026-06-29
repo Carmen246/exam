@@ -15,6 +15,8 @@ import com.yf.exam.modules.qu.dto.QuestionParseReqDTO;
 import com.yf.exam.modules.qu.dto.QuestionParseRespDTO;
 import com.yf.exam.modules.qu.dto.QuestionImportReqDTO;
 import com.yf.exam.modules.qu.dto.QuestionImportRespDTO;
+import com.yf.exam.modules.qu.dto.QuestionNormalizeTextReqDTO;
+import com.yf.exam.modules.qu.dto.QuestionNormalizeTextRespDTO;
 @RestController
 @RequestMapping("/exam/api/qu")
 public class QuestionAiImportController extends BaseController {
@@ -36,6 +38,15 @@ public class QuestionAiImportController extends BaseController {
 
         return success(resp);
     }
+    
+    @RequiresRoles("sa")
+    @ApiOperation(value = "AI清洗试题文本")
+    @RequestMapping(value = "/normalize-text", method = {RequestMethod.POST})
+    public ApiRest<QuestionNormalizeTextRespDTO> normalizeText(@RequestBody QuestionNormalizeTextReqDTO reqDTO) {
+        QuestionNormalizeTextRespDTO respDTO = questionAiParseService.normalizeText(reqDTO);
+        return super.success(respDTO);
+    }
+
     @Autowired
     private QuestionAiParseService questionAiParseService;
     @RequiresRoles("sa")
