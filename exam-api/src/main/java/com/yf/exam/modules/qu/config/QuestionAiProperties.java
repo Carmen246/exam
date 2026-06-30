@@ -17,5 +17,15 @@ public class QuestionAiProperties {
 
     private Integer timeoutSeconds = 60;
 
+    /** 解析阶段单批最大字符数上限（与清洗批次独立） */
     private Integer maxTextLength = 20000;
+
+    /** 清洗单批最大字符数 */
+    private Integer normalizeBatchLength = 10000;
+
+    /** 清洗单批最大题数 */
+    private Integer normalizeBatchQuestionCount = 20;
+
+    /** 清洗并发批次数 */
+    private Integer normalizeConcurrency = 3;
 }

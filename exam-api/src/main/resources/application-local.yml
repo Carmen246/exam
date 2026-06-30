@@ -78,3 +78,15 @@ logging:
   level:
     root: debug
   path: logs/${spring.application.name}/
+
+# API调用配置
+exam:
+  ai:
+    base-url: https://api.deepseek.com
+    api-key: ${DEEPSEEK_API_KEY:}
+    model-name: deepseek-v4-flash
+    timeout-seconds: 60
+    max-text-length: 20000
+    normalize-batch-length: 10000
+    normalize-batch-question-count: 20
+    normalize-concurrency: 3

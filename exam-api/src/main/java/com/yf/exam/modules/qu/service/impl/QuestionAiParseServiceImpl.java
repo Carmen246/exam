@@ -18,6 +18,8 @@ import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.output.Response;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import com.yf.exam.modules.qu.dto.QuestionImportReqDTO;
@@ -32,15 +34,19 @@ import com.yf.exam.modules.qu.support.ImportTaskProgressListener;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 @Service
 public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
-    private static final int DEFAULT_NORMALIZE_BATCH_LENGTH = 3500;
+    private static final int DEFAULT_NORMALIZE_BATCH_LENGTH = 10000;
     private static final int DEFAULT_PARSE_BATCH_LENGTH = 1800;
     private static final int FALLBACK_PARSE_BATCH_LENGTH = 1000;
-    private static final int NORMALIZE_BATCH_QUESTION_COUNT = 6;
+    private static final int NORMALIZE_BATCH_QUESTION_COUNT = 20;
     private static final int PARSE_BATCH_QUESTION_COUNT = 2;
     private static final int FALLBACK_PARSE_BATCH_QUESTION_COUNT = 1;
     private static final int AI_RETRY_TIMES = 2;
@@ -73,6 +79,10 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     @Autowired
     private QuestionAiProperties properties;
 
+    @Autowired
+    @Qualifier("asyncExecutor")
+    private ThreadPoolTaskExecutor asyncExecutor;
+
     private volatile ChatLanguageModel chatModel;
 
     @Override
@@ -87,37 +97,17 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             throw new ServiceException("待清洗文本不能为空");
         }
 
-        List<String> chunks = splitQuestionText(reqDTO.getText(), maxBatchLength(DEFAULT_NORMALIZE_BATCH_LENGTH),
-                NORMALIZE_BATCH_QUESTION_COUNT);
+        List<String> chunks = splitQuestionText(reqDTO.getText(), normalizeBatchLength(),
+                normalizeBatchQuestionCount());
         if (chunks.size() > 1) {
-            StringBuilder normalizedText = new StringBuilder();
-            int batchIndex = 1;
-            for (String chunk : chunks) {
-                if (listener != null) {
-                    listener.onBatchProgress(batchIndex - 1, chunks.size(),
-                            "正在AI清洗第" + batchIndex + "批文本（共" + chunks.size() + "批）");
-                }
-                QuestionNormalizeTextRespDTO part = normalizeTextWithRetry(chunk, String.valueOf(batchIndex));
-                if (StringUtils.isNotBlank(part.getNormalizedText())) {
-                    if (normalizedText.length() > 0) {
-                        normalizedText.append("\n\n");
-                    }
-                    normalizedText.append(part.getNormalizedText().trim());
-                }
-                if (listener != null) {
-                    listener.onBatchProgress(batchIndex, chunks.size(),
-                            "已完成AI清洗第" + batchIndex + "批文本（共" + chunks.size() + "批）");
-                }
-                batchIndex++;
-            }
-
+            String normalizedText = normalizeTextParallel(chunks, listener);
             if (normalizedText.length() == 0) {
                 throw new ServiceException("AI未返回清洗后的文本");
             }
 
             QuestionNormalizeTextRespDTO respDTO = new QuestionNormalizeTextRespDTO();
             respDTO.setRawText(reqDTO.getText());
-            respDTO.setNormalizedText(normalizedText.toString());
+            respDTO.setNormalizedText(normalizedText);
             return respDTO;
         }
 
@@ -130,6 +120,91 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         }
         respDTO.setRawText(reqDTO.getText());
         return respDTO;
+    }
+
+    private String normalizeTextParallel(List<String> chunks, ImportTaskProgressListener listener) {
+        int total = chunks.size();
+        int concurrency = Math.min(normalizeConcurrency(), total);
+        String[] results = new String[total];
+        AtomicInteger nextIndex = new AtomicInteger(0);
+        AtomicInteger completed = new AtomicInteger(0);
+        AtomicBoolean failed = new AtomicBoolean(false);
+        AtomicReference<ServiceException> firstError = new AtomicReference<>();
+
+        if (listener != null) {
+            listener.onBatchProgress(0, total,
+                    "正在AI清洗文本（共" + total + "批，" + concurrency + "路并发）");
+        }
+
+        List<CompletableFuture<Void>> workers = new ArrayList<>();
+        for (int i = 0; i < concurrency; i++) {
+            workers.add(CompletableFuture.runAsync(() -> {
+                while (!failed.get()) {
+                    int index = nextIndex.getAndIncrement();
+                    if (index >= total) {
+                        return;
+                    }
+                    try {
+                        QuestionNormalizeTextRespDTO part = normalizeTextWithRetry(chunks.get(index),
+                                String.valueOf(index + 1));
+                        if (StringUtils.isNotBlank(part.getNormalizedText())) {
+                            results[index] = part.getNormalizedText().trim();
+                        }
+                        int done = completed.incrementAndGet();
+                        if (listener != null) {
+                            listener.onBatchProgress(done, total,
+                                    "已完成AI清洗 " + done + "/" + total + " 批");
+                        }
+                    } catch (ServiceException e) {
+                        failed.set(true);
+                        firstError.compareAndSet(null, e);
+                        return;
+                    }
+                }
+            }, asyncExecutor));
+        }
+
+        CompletableFuture.allOf(workers.toArray(new CompletableFuture[0])).join();
+
+        ServiceException error = firstError.get();
+        if (error != null) {
+            throw error;
+        }
+
+        StringBuilder normalizedText = new StringBuilder();
+        for (String part : results) {
+            if (StringUtils.isNotBlank(part)) {
+                if (normalizedText.length() > 0) {
+                    normalizedText.append("\n\n");
+                }
+                normalizedText.append(part);
+            }
+        }
+        return normalizedText.toString();
+    }
+
+    private int normalizeBatchLength() {
+        Integer configured = properties.getNormalizeBatchLength();
+        if (configured != null && configured > 0) {
+            return configured;
+        }
+        return DEFAULT_NORMALIZE_BATCH_LENGTH;
+    }
+
+    private int normalizeBatchQuestionCount() {
+        Integer configured = properties.getNormalizeBatchQuestionCount();
+        if (configured == null || configured <= 0) {
+            return NORMALIZE_BATCH_QUESTION_COUNT;
+        }
+        return configured;
+    }
+
+    private int normalizeConcurrency() {
+        Integer configured = properties.getNormalizeConcurrency();
+        if (configured == null || configured <= 0) {
+            return 3;
+        }
+        return Math.min(configured, 8);
     }
 
     private QuestionNormalizeTextRespDTO normalizeTextWithRetry(String text, String batchNo) {
