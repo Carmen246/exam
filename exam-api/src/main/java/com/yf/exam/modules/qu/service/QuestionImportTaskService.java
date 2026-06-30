@@ -12,5 +12,7 @@ public interface QuestionImportTaskService {
 
     QuestionImportTaskStatusRespDTO getTaskStatus(String taskId);
 
+    QuestionImportTaskStatusRespDTO retryTask(String taskId);
+
     void processTask(String taskId);
 }

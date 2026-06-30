@@ -55,6 +55,19 @@
         <div v-if="taskTotalBatches > 0" class="task-progress-batch">
           批次进度：{{ taskCompletedBatches }} / {{ taskTotalBatches }}
         </div>
+        <div v-if="taskFailed" class="task-progress-actions">
+          <span v-if="retryHint" class="task-retry-hint">{{ retryHint }}</span>
+          <el-button
+            type="primary"
+            size="small"
+            icon="el-icon-refresh"
+            :loading="retryLoading"
+            :disabled="!canRetryTask"
+            @click="handleRetryTask"
+          >
+            重试
+          </el-button>
+        </div>
       </el-card>
 
       <el-row :gutter="18" class="main-row">
@@ -198,7 +211,7 @@
 
 <script>
 import RepoSelect from '@/components/RepoSelect'
-import { createImportTask, getImportTaskStatus, confirmQuestionImport, TASK_POLL_INTERVAL } from '@/api/qu/qu'
+import { createImportTask, getImportTaskStatus, retryImportTask, confirmQuestionImport, TASK_POLL_INTERVAL } from '@/api/qu/qu'
 
 export default {
   name: 'AiImportQu',
@@ -233,6 +246,8 @@ export default {
       taskTotalBatches: 0,
       taskCompletedBatches: 0,
       lastPolledStatus: '',
+      taskHasNormalizedText: false,
+      retryLoading: false,
       pollTimer: null,
       rules: {
         repoIds: [
@@ -271,6 +286,21 @@ export default {
         return '文档正在后台解析，完成后将在这里显示清洗后的文本...'
       }
       return '在这里粘贴试题文本，例如：1. Java属于什么类型的语言？ A. 编程语言 B. 数据库 C. 操作系统 D. 浏览器 答案：A'
+    },
+    retryHint() {
+      if (!this.taskFailed) {
+        return ''
+      }
+      if (!this.canRetryTask) {
+        return '文档未提取成功，请重新上传文件'
+      }
+      if (this.taskHasNormalizedText) {
+        return '清洗已完成，将从 AI 解析阶段继续'
+      }
+      return '将从 AI 清洗阶段继续'
+    },
+    canRetryTask() {
+      return !!(this.rawSourceText && this.rawSourceText.trim())
     }
   },
   beforeDestroy() {
@@ -391,11 +421,35 @@ export default {
             this.handleTaskCompleted(data)
           } else {
             this.taskFailed = true
+            this.taskHasNormalizedText = !!(data.normalizedText && data.normalizedText.trim())
+            if (data.rawText) {
+              this.rawSourceText = data.rawText
+            }
             this.$message.error(data.errorMessage || '导入任务处理失败')
           }
         }
       }, () => {
         // 轮询失败时不打断任务，等待下次重试
+      })
+    },
+
+    handleRetryTask() {
+      if (!this.taskId || !this.taskFailed) {
+        return
+      }
+
+      this.retryLoading = true
+      retryImportTask(this.taskId).then(res => {
+        const data = res.data || {}
+        this.taskFailed = false
+        this.taskRunning = true
+        this.retryLoading = false
+        this.lastPolledStatus = ''
+        this.applyTaskStatus(data)
+        this.$message.info(data.message || '正在重试导入任务')
+        this.startPolling()
+      }, () => {
+        this.retryLoading = false
       })
     },
 
@@ -466,6 +520,7 @@ export default {
       this.taskStatusLabel = ''
       this.taskTotalBatches = 0
       this.taskCompletedBatches = 0
+      this.taskHasNormalizedText = false
       if (clearLastStatus) {
         this.lastPolledStatus = ''
       }
@@ -615,6 +670,20 @@ export default {
   margin-top: 6px;
   color: #909399;
   font-size: 12px;
+}
+
+.task-progress-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+  gap: 12px;
+}
+
+.task-retry-hint {
+  flex: 1;
+  color: #909399;
+  font-size: 13px;
 }
 
 .base-form {

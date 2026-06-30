@@ -81,6 +81,14 @@ export function getImportTaskStatus(taskId) {
   return get('/exam/api/qu/import-task/' + taskId, { silent: true })
 }
 
+/**
+ * 重试失败的 AI 导入任务
+ * @param taskId
+ */
+export function retryImportTask(taskId) {
+  return post('/exam/api/qu/import-task/' + taskId + '/retry')
+}
+
 export { TASK_POLL_INTERVAL }
 
 /**

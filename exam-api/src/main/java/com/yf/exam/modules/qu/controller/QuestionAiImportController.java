@@ -52,6 +52,13 @@ public class QuestionAiImportController extends BaseController {
     }
 
     @RequiresRoles("sa")
+    @ApiOperation(value = "重试失败的AI导入任务")
+    @PostMapping("/import-task/{taskId}/retry")
+    public ApiRest<QuestionImportTaskStatusRespDTO> retryImportTask(@PathVariable("taskId") String taskId) {
+        return success(questionImportTaskService.retryTask(taskId));
+    }
+
+    @RequiresRoles("sa")
     @PostMapping("/parse-text")
     public ApiRest<QuestionParseTextRespDTO> parseText(@RequestParam("file") MultipartFile file) {
         String rawText = documentParseService.parseText(file);

@@ -112,9 +112,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
         }
 
         try {
-            extractText(task);
-            normalizeText(task);
-            parseQuestions(task);
+            runFromExtract(task);
             finishTask(task);
         } catch (Exception e) {
             failTask(task, e);
@@ -122,6 +120,67 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
             deleteTempFile(task.getTempFile());
             task.setTempFile(null);
         }
+    }
+
+    @Override
+    public QuestionImportTaskStatusRespDTO retryTask(String taskId) {
+        cleanupExpiredTasks();
+        QuestionImportTask task = tasks.get(taskId);
+        if (task == null) {
+            throw new ServiceException("导入任务不存在或已过期");
+        }
+        if (task.getStatus() != QuestionImportTaskStatus.FAILED) {
+            throw new ServiceException("只有失败的任务才能重试");
+        }
+        if (StringUtils.isBlank(task.getRawText())) {
+            throw new ServiceException("文档未提取成功，请重新上传文件");
+        }
+
+        boolean resumeFromParse = StringUtils.isNotBlank(task.getNormalizedText());
+        task.setErrorMessage(null);
+        task.setQuestions(new ArrayList<>());
+        task.setTotalBatches(0);
+        task.setCompletedBatches(0);
+
+        if (resumeFromParse) {
+            task.setStatus(QuestionImportTaskStatus.PARSING);
+            task.setProgress(PROGRESS_PARSE_START);
+            task.setMessage("正在从 AI 解析阶段重试...");
+        } else {
+            task.setNormalizedText(null);
+            task.setStatus(QuestionImportTaskStatus.NORMALIZING);
+            task.setProgress(PROGRESS_NORMALIZE_START);
+            task.setMessage("正在从 AI 清洗阶段重试...");
+        }
+
+        asyncExecutor.execute(() -> {
+            try {
+                if (resumeFromParse) {
+                    runFromParse(task);
+                } else {
+                    runFromNormalize(task);
+                }
+                finishTask(task);
+            } catch (Exception e) {
+                failTask(task, e);
+            }
+        });
+
+        return toStatusResp(task);
+    }
+
+    private void runFromExtract(QuestionImportTask task) {
+        extractText(task);
+        runFromNormalize(task);
+    }
+
+    private void runFromNormalize(QuestionImportTask task) {
+        normalizeText(task);
+        runFromParse(task);
+    }
+
+    private void runFromParse(QuestionImportTask task) {
+        parseQuestions(task);
     }
 
     private void extractText(QuestionImportTask task) {
