@@ -351,6 +351,7 @@ import {
   parseFillProgramContent,
   parseStemCodeContent,
   fillProgramBlankLabel,
+  hideFillMarkersForDisplay,
   stemCodeSectionLabel
 } from '@/utils/quFormat'
 
@@ -595,7 +596,7 @@ export default {
             this.taskPartialCompleted = false
             this.taskHasNormalizedText = !!(data.normalizedText && data.normalizedText.trim())
             if (data.rawText) {
-              this.rawSourceText = data.rawText
+              this.rawSourceText = hideFillMarkersForDisplay(data.rawText)
             }
             if (data.questions && data.questions.length) {
               this.questions = data.questions
@@ -677,7 +678,7 @@ export default {
 
     handleTaskPartialCompleted(data) {
       this.questions = data.questions || []
-      this.rawSourceText = data.rawText || ''
+      this.rawSourceText = hideFillMarkersForDisplay(data.rawText || '')
       if (data.normalizedText) {
         this.parseForm.text = data.normalizedText
       }
@@ -686,7 +687,7 @@ export default {
 
     handleTaskCompleted(data) {
       this.questions = data.questions || []
-      this.rawSourceText = data.rawText || ''
+      this.rawSourceText = hideFillMarkersForDisplay(data.rawText || '')
       if (data.normalizedText) {
         this.parseForm.text = data.normalizedText
       }

@@ -20,6 +20,9 @@ public class FillProgramBlankProcessor {
     public static final String BLANK = "____";
     public static final String FILL_PREFIX = "{FILL:";
     public static final String FILL_SUFFIX = "}";
+    /** 同一空位的多种等价答案之间的分隔符 */
+    public static final String ANSWER_VARIANT_SEPARATOR = " 或 ";
+    private static final String ANSWER_VARIANT_SPLIT = "\\s+/\\s+|\\s+或\\s+|[；;|、]";
 
     /** Word 多空格包围的填空片段，如 if(    max<a[row][col]    ) */
     private static final Pattern SPACE_PADDED_BLANK = Pattern.compile(
@@ -109,6 +112,14 @@ public class FillProgramBlankProcessor {
         return sb.toString();
     }
 
+    /** 用户可见文本：内部 {FILL:答案} 标记替换为 ____，不暴露给预览/入库展示 */
+    public static String hideFillMarkersForDisplay(String text) {
+        if (StringUtils.isBlank(text)) {
+            return text;
+        }
+        return FILL_MARKER.matcher(text).replaceAll(BLANK);
+    }
+
     private List<BlankSlot> detectConditionBlanks(String code) {
         List<BlankSlot> result = new ArrayList<>();
         if (StringUtils.isBlank(code)) {
@@ -162,52 +173,119 @@ public class FillProgramBlankProcessor {
         }
 
         // 等价写法写在同一空的 content 里，不增加 answerList 条数
-        merged = addEquivalentAnswers(merged);
+        merged = addEquivalentAnswers(merged, working);
 
         result.setCode(working);
         result.setBlanks(merged);
         return result;
     }
 
-    private List<BlankSlot> addEquivalentAnswers(List<BlankSlot> blanks) {
+    private List<BlankSlot> addEquivalentAnswers(List<BlankSlot> blanks, String code) {
         if (blanks == null || blanks.isEmpty()) {
             return blanks;
         }
         List<BlankSlot> result = new ArrayList<>();
-        for (BlankSlot slot : blanks) {
+        for (int i = 0; i < blanks.size(); i++) {
+            BlankSlot slot = blanks.get(i);
             if (slot == null || StringUtils.isBlank(slot.getContent())) {
                 result.add(slot);
                 continue;
             }
-            String content = slot.getContent().trim();
-            String equivalent = buildCTruthExpressionEquivalent(content);
-            if (StringUtils.isNotBlank(equivalent) && !containsAnswerVariant(content, equivalent)) {
-                result.add(new BlankSlot(content + " / " + equivalent, slot.getNote()));
-            } else {
+            if (!isConditionContextBlank(code, i)) {
                 result.add(slot);
+                continue;
             }
+            String merged = mergeConditionEquivalents(slot.getContent());
+            result.add(new BlankSlot(merged, slot.getNote()));
         }
         return result;
     }
 
-    private String buildCTruthExpressionEquivalent(String answer) {
-        String normalized = normalizeExpression(answer);
+    /**
+     * 条件空位的等价写法：a[num] 与 a[num]!='\0' 合并到同一 content，用 " 或 " 分隔
+     */
+    private String mergeConditionEquivalents(String answer) {
+        String trimmed = answer.trim();
+        String primary = primaryAnswer(trimmed);
+        String normalized = normalizeExpression(primary);
+
+        String base = extractBaseFromNotNullCheck(normalized);
+        if (base != null && isSimpleVariableOrArrayExpr(base)) {
+            String longForm = normalized.contains("!=") ? primary : base + "!='\\0'";
+            if (containsAnswerVariant(trimmed, base) && containsAnswerVariant(trimmed, longForm)) {
+                return trimmed;
+            }
+            return joinAnswerVariants(base, longForm);
+        }
+
+        if (isSimpleVariableOrArrayExpr(normalized)) {
+            String longForm = normalized + "!='\\0'";
+            if (containsAnswerVariant(trimmed, trimmed) && containsAnswerVariant(trimmed, longForm)) {
+                return trimmed;
+            }
+            return joinAnswerVariants(trimmed, longForm);
+        }
+
+        return trimmed;
+    }
+
+    private String joinAnswerVariants(String... variants) {
+        LinkedHashSet<String> ordered = new LinkedHashSet<>();
+        for (String variant : variants) {
+            if (StringUtils.isNotBlank(variant)) {
+                ordered.add(variant.trim());
+            }
+        }
+        return String.join(ANSWER_VARIANT_SEPARATOR, ordered);
+    }
+
+    private boolean isConditionContextBlank(String code, int blankIndex) {
+        if (StringUtils.isBlank(code) || blankIndex < 0) {
+            return false;
+        }
+        int from = 0;
+        for (int i = 0; i <= blankIndex; i++) {
+            int idx = code.indexOf(BLANK, from);
+            if (idx < 0) {
+                return false;
+            }
+            if (i == blankIndex) {
+                String before = code.substring(Math.max(0, idx - 40), idx);
+                return before.matches("(?s).*\\b(while|if|else\\s+if)\\s*\\(\\s*$");
+            }
+            from = idx + BLANK.length();
+        }
+        return false;
+    }
+
+    private String extractBaseFromNotNullCheck(String normalized) {
         if (StringUtils.isBlank(normalized)) {
             return null;
         }
+        Matcher matcher = Pattern.compile("^(.+)!='\\\\0'$").matcher(normalized);
+        if (matcher.matches()) {
+            return matcher.group(1);
+        }
+        return null;
+    }
+
+    private boolean isSimpleVariableOrArrayExpr(String normalized) {
+        if (StringUtils.isBlank(normalized)) {
+            return false;
+        }
+        if (normalized.contains("=") && !normalized.contains("!=") && !normalized.contains("==")) {
+            return false;
+        }
         if (normalized.contains("!=") || normalized.contains("==")
                 || normalized.contains(">") || normalized.contains("<")) {
-            return null;
+            return false;
         }
-        if (!normalized.matches("[A-Za-z_][A-Za-z0-9_]*(\\[[^\\]]+])+")) {
-            return null;
-        }
-        return normalized + "!='\\0'";
+        return normalized.matches("[A-Za-z_][A-Za-z0-9_]*(\\[[^\\]]+])*");
     }
 
     private boolean containsAnswerVariant(String content, String variant) {
         String normalizedVariant = normalizeExpression(variant);
-        String[] parts = content.split("\\s+/\\s+|[；;|、]");
+        String[] parts = content.split(ANSWER_VARIANT_SPLIT);
         for (String part : parts) {
             if (StringUtils.equals(normalizeExpression(part), normalizedVariant)) {
                 return true;
@@ -424,7 +502,7 @@ public class FillProgramBlankProcessor {
         if (StringUtils.isBlank(content)) {
             return content;
         }
-        String[] parts = content.split("\\s+/\\s+|[；;|、]");
+        String[] parts = content.split(ANSWER_VARIANT_SPLIT);
         return parts[0].trim();
     }
 

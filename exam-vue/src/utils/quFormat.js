@@ -64,6 +64,14 @@ export function fillProgramBlankLabel(index) {
   return `第${index + 1}空`
 }
 
+/** 隐藏 docx 内部 {FILL:答案} 标记，预览/展示用 */
+export function hideFillMarkersForDisplay(text) {
+  if (!text) {
+    return text
+  }
+  return String(text).replace(/\{FILL:([^}]+)\}/g, '____')
+}
+
 /**
  * 题干区域是否使用代码样式
  * @param {number} quType

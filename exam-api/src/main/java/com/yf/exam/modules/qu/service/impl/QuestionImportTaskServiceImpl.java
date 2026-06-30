@@ -16,6 +16,7 @@ import com.yf.exam.modules.qu.enums.QuestionImportTaskStatus;
 import com.yf.exam.modules.qu.service.QuestionAiParseService;
 import com.yf.exam.modules.qu.service.QuestionDocumentParseService;
 import com.yf.exam.modules.qu.service.QuestionImportTaskService;
+import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -546,7 +547,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
             dto.setStatus(state.getStatus());
             dto.setQuestionCount(state.getQuestionCount());
             dto.setErrorMessage(state.getErrorMessage());
-            dto.setPreviewText(state.getPreviewText());
+            dto.setPreviewText(FillProgramBlankProcessor.hideFillMarkersForDisplay(state.getPreviewText()));
             batches.add(dto);
         }
         return batches;
@@ -573,8 +574,8 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
                 || task.getStatus() == QuestionImportTaskStatus.FAILED;
 
         if (exposeResult) {
-            resp.setRawText(task.getRawText());
-            resp.setNormalizedText(task.getNormalizedText());
+            resp.setRawText(FillProgramBlankProcessor.hideFillMarkersForDisplay(task.getRawText()));
+            resp.setNormalizedText(FillProgramBlankProcessor.hideFillMarkersForDisplay(task.getNormalizedText()));
             resp.setQuestions(task.getQuestions());
             resp.setCount(CollectionUtils.isEmpty(task.getQuestions()) ? 0 : task.getQuestions().size());
         }

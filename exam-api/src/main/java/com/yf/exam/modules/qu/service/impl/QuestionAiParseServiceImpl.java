@@ -1361,9 +1361,9 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         if (qu == null) {
             return;
         }
-        qu.setContent(restoreFillMarkers(qu.getContent()));
-        qu.setAnalysis(restoreFillMarkers(qu.getAnalysis()));
-        qu.setRemark(restoreFillMarkers(qu.getRemark()));
+        qu.setContent(FillProgramBlankProcessor.hideFillMarkersForDisplay(qu.getContent()));
+        qu.setAnalysis(FillProgramBlankProcessor.hideFillMarkersForDisplay(qu.getAnalysis()));
+        qu.setRemark(FillProgramBlankProcessor.hideFillMarkersForDisplay(qu.getRemark()));
 
         if (CollectionUtils.isEmpty(qu.getAnswerList())) {
             return;
@@ -1372,8 +1372,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             if (answer == null) {
                 continue;
             }
-            answer.setContent(restoreFillMarkers(answer.getContent()));
-            answer.setAnalysis(restoreFillMarkers(answer.getAnalysis()));
+            answer.setContent(FillProgramBlankProcessor.hideFillMarkersForDisplay(answer.getContent()));
+            answer.setAnalysis(FillProgramBlankProcessor.hideFillMarkersForDisplay(answer.getAnalysis()));
         }
     }
 
