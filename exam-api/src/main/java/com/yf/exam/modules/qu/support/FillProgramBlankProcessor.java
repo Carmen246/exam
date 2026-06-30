@@ -149,7 +149,11 @@ public class FillProgramBlankProcessor {
         }
 
         List<BlankSlot> merged = mergeBlanks(extracted, aiAnswers, existingBlankCount);
-        working = replaceAnswersWithBlanks(working, merged);
+
+        // 若已由 {FILL:...} 或空格空位生成 ____，不再全局 replace，避免 a[num]='\0' 被误替换成第三空
+        if (countExistingBlanks(working) == 0) {
+            working = replaceAnswersWithBlanks(working, merged);
+        }
         working = normalizeBlankPlaceholder(working);
 
         int blankCount = countExistingBlanks(working);
@@ -157,9 +161,59 @@ public class FillProgramBlankProcessor {
             merged = reconcileBlankCount(working, merged);
         }
 
+        // 等价写法写在同一空的 content 里，不增加 answerList 条数
+        merged = addEquivalentAnswers(merged);
+
         result.setCode(working);
         result.setBlanks(merged);
         return result;
+    }
+
+    private List<BlankSlot> addEquivalentAnswers(List<BlankSlot> blanks) {
+        if (blanks == null || blanks.isEmpty()) {
+            return blanks;
+        }
+        List<BlankSlot> result = new ArrayList<>();
+        for (BlankSlot slot : blanks) {
+            if (slot == null || StringUtils.isBlank(slot.getContent())) {
+                result.add(slot);
+                continue;
+            }
+            String content = slot.getContent().trim();
+            String equivalent = buildCTruthExpressionEquivalent(content);
+            if (StringUtils.isNotBlank(equivalent) && !containsAnswerVariant(content, equivalent)) {
+                result.add(new BlankSlot(content + " / " + equivalent, slot.getNote()));
+            } else {
+                result.add(slot);
+            }
+        }
+        return result;
+    }
+
+    private String buildCTruthExpressionEquivalent(String answer) {
+        String normalized = normalizeExpression(answer);
+        if (StringUtils.isBlank(normalized)) {
+            return null;
+        }
+        if (normalized.contains("!=") || normalized.contains("==")
+                || normalized.contains(">") || normalized.contains("<")) {
+            return null;
+        }
+        if (!normalized.matches("[A-Za-z_][A-Za-z0-9_]*(\\[[^\\]]+])+")) {
+            return null;
+        }
+        return normalized + "!='\\0'";
+    }
+
+    private boolean containsAnswerVariant(String content, String variant) {
+        String normalizedVariant = normalizeExpression(variant);
+        String[] parts = content.split("[；;|/、]");
+        for (String part : parts) {
+            if (StringUtils.equals(normalizeExpression(part), normalizedVariant)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String extractFillMarkers(String code, List<BlankSlot> extracted) {
@@ -288,11 +342,11 @@ public class FillProgramBlankProcessor {
         List<Replacement> replacements = new ArrayList<>();
         String working = code;
         for (BlankSlot slot : blanks) {
-            MatchRange range = findAnswerRange(working, slot.getContent());
+            MatchRange range = findAnswerRange(working, primaryAnswer(slot.getContent()));
             if (range == null && StringUtils.isNotBlank(slot.getNote())) {
                 String original = parseOriginalFromNote(slot.getNote());
                 if (StringUtils.isNotBlank(original)) {
-                    range = findAnswerRange(working, original);
+                    range = findAnswerRange(working, primaryAnswer(original));
                 }
             }
             if (range != null) {
@@ -345,6 +399,7 @@ public class FillProgramBlankProcessor {
         if (StringUtils.isBlank(text) || StringUtils.isBlank(answer)) {
             return null;
         }
+        answer = primaryAnswer(answer);
         int exact = text.indexOf(answer);
         if (exact >= 0) {
             return new MatchRange(exact, exact + answer.length());
@@ -358,8 +413,16 @@ public class FillProgramBlankProcessor {
         return null;
     }
 
+    private String primaryAnswer(String content) {
+        if (StringUtils.isBlank(content)) {
+            return content;
+        }
+        String[] parts = content.split("\\s+/\\s+|[；;|、]");
+        return parts[0].trim();
+    }
+
     private String buildFlexiblePattern(String answer) {
-        String escaped = Pattern.quote(answer.trim());
+        String escaped = Pattern.quote(primaryAnswer(answer).trim());
         escaped = escaped.replace("\\ ", "\\s+");
         return escaped;
     }
