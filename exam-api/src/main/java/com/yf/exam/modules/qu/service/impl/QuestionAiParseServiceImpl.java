@@ -26,6 +26,7 @@ import com.yf.exam.modules.qu.dto.QuestionImportReqDTO;
 import com.yf.exam.modules.qu.dto.QuestionImportRespDTO;
 import com.yf.exam.modules.qu.service.QuService;
 import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
+import com.yf.exam.modules.qu.support.ProgramContentFormatter;
 import com.yf.exam.modules.repo.service.RepoService;
 import org.springframework.transaction.annotation.Transactional;
 import com.yf.exam.modules.qu.dto.QuestionNormalizeTextReqDTO;
@@ -112,6 +113,9 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
     @Autowired
     private FillProgramBlankProcessor fillProgramBlankProcessor;
+
+    @Autowired
+    private ProgramContentFormatter programContentFormatter;
 
     private volatile ChatLanguageModel chatModel;
 
@@ -700,15 +704,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         }
 
         FillProgramBlankProcessor.ProcessResult processed = fillProgramBlankProcessor.process(code, aiAnswers);
-        code = processed.getCode();
-
-        if (StringUtils.isNotBlank(stem) && StringUtils.isNotBlank(code)) {
-            content = stem + "\n\n" + code;
-        } else if (StringUtils.isNotBlank(code)) {
-            content = code;
-        } else {
-            content = stem;
-        }
+        code = programContentFormatter.formatProgramCode(processed.getCode());
+        content = programContentFormatter.mergeStemAndCode(stem, code);
 
         List<QuAnswerDTO> blankAnswers = buildBlankAnswerList(processed.getBlanks());
         appendBlankNotesToAnalysis(qu, processed.getBlanks());
@@ -817,13 +814,11 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     : content + "\n\n" + programFromAnswer;
         }
 
-        int codeStart = findCodeBlockStart(content);
-        if (codeStart > 0) {
-            String stem = content.substring(0, codeStart).trim();
-            String code = content.substring(codeStart).trim();
-            if (StringUtils.isNotBlank(stem) && StringUtils.isNotBlank(code)) {
-                content = stem + "\n\n" + code;
-            }
+        ProgramContentFormatter.StemCodeParts parts = programContentFormatter.splitStemAndCode(content);
+        if (StringUtils.isNotBlank(parts.getCode())) {
+            content = programContentFormatter.mergeStemAndCode(parts.getStem(), parts.getCode());
+        } else {
+            content = programContentFormatter.cleanStem(content);
         }
 
         qu.setContent(content);
@@ -877,19 +872,19 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             }
         }
 
-        int codeStart = findCodeBlockStart(content);
-        if (codeStart > 0) {
-            String stem = content.substring(0, codeStart).trim();
-            String code = content.substring(codeStart).trim();
-            if (StringUtils.isNotBlank(stem) && StringUtils.isNotBlank(code)) {
-                content = stem + "\n\n" + code;
+        ProgramContentFormatter.StemCodeParts parts = programContentFormatter.splitStemAndCode(content);
+        if (StringUtils.isNotBlank(parts.getCode())) {
+            content = programContentFormatter.mergeStemAndCode(parts.getStem(), parts.getCode());
+        }
+
+        if (!fixedAnswers.isEmpty()) {
+            for (QuAnswerDTO answer : fixedAnswers) {
+                answer.setContent(programContentFormatter.formatProgramCode(answer.getContent()));
             }
+            qu.setAnswerList(fixedAnswers);
         }
 
         qu.setContent(content);
-        if (!fixedAnswers.isEmpty()) {
-            qu.setAnswerList(fixedAnswers);
-        }
     }
 
     private boolean isBlankFillAnswer(String text) {
@@ -1029,36 +1024,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     }
 
     private int findCodeBlockStart(String text) {
-        if (StringUtils.isBlank(text)) {
-            return -1;
-        }
-        java.util.regex.Matcher matcher = CODE_START_PATTERN.matcher(text);
-        if (matcher.find()) {
-            return matcher.start();
-        }
-        String[] markers = {"#include", "void main", "int main", "public class", "def ", "function "};
-        for (String marker : markers) {
-            int idx = indexOfAtLineStart(text, marker);
-            if (idx > 0) {
-                return idx;
-            }
-        }
-        return -1;
-    }
-
-    private int indexOfAtLineStart(String text, String marker) {
-        int searchFrom = 0;
-        while (searchFrom < text.length()) {
-            int idx = text.indexOf(marker, searchFrom);
-            if (idx < 0) {
-                return -1;
-            }
-            if (idx == 0 || text.charAt(idx - 1) == '\n') {
-                return idx;
-            }
-            searchFrom = idx + 1;
-        }
-        return -1;
+        return programContentFormatter.findCodeBlockStart(text);
     }
 
     private boolean containsCodeBlock(String text) {

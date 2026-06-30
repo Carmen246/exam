@@ -6,7 +6,99 @@ export function looksLikeCode(text) {
   if (!text) {
     return false
   }
-  return /#include|#define|void\s+main|int\s+main|int\s+\w+\s*\(|public\s+class|def\s+\w+\(|function\s+\w+\(/.test(text)
+  return /#include|#define|void\s+main|int\s+main|main\s*\(|int\s+\w+\s*[=()]|public\s+class|def\s+\w+\(|function\s+\w+\(/.test(text)
+}
+
+const CODE_START_PATTERN = /^\s*(#include|#define|(int|char|void|float|double|long|short|unsigned)\s+\w+\s*[=()]|main\s*\()/m
+const RUN_RESULT_SUFFIX = /运行结果\s*[:：]\s*.+$/m
+const INLINE_INSTRUCTION = /阅读程序[，,]?\s*|写出运行结果[。.]?\s*/g
+
+export function cleanQuestionStem(stem) {
+  if (!stem) {
+    return ''
+  }
+  return String(stem)
+    .replace(/^\s*\d+[.．、]\s*/, '')
+    .replace(RUN_RESULT_SUFFIX, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export function formatProgramCode(code) {
+  if (!code) {
+    return ''
+  }
+  let text = String(code).trim()
+  text = text.replace(INLINE_INSTRUCTION, '')
+  text = text.replace(RUN_RESULT_SUFFIX, '').trim()
+  text = text.replace(/^[ \u4e00-\u9fa5，。；：、！？…]+$/gm, '').trim()
+
+  if (needsLayoutNormalize(text)) {
+    text = text.replace(/;\s*/g, ';\n')
+    text = text.replace(/\{\s*/g, ' {\n')
+    text = text.replace(/\}\s*/g, '\n}\n')
+  }
+
+  const lines = text.replace(/\r\n/g, '\n').split('\n')
+  const result = []
+  let level = 0
+  for (const rawLine of lines) {
+    const line = rawLine.trim()
+    if (!line) {
+      continue
+    }
+    if (line.startsWith('}')) {
+      level = Math.max(0, level - 1)
+    }
+    result.push(`${'  '.repeat(level)}${line}`)
+    if (line.endsWith('{')) {
+      level += 1
+    }
+  }
+  return result.join('\n')
+}
+
+function needsLayoutNormalize(text) {
+  if (!text.includes('{') && !text.includes(';')) {
+    return false
+  }
+  const lines = text.split('\n')
+  for (const rawLine of lines) {
+    const line = rawLine.trim()
+    if (!line) {
+      continue
+    }
+    if (/\{[^}]*;/.test(line)) {
+      return true
+    }
+    if (line.length > 48 && line.includes(';')) {
+      return true
+    }
+  }
+  return false
+}
+
+function findCodeBlockStart(text) {
+  if (!text) {
+    return -1
+  }
+  const match = text.match(CODE_START_PATTERN)
+  if (match && match.index != null) {
+    return match.index
+  }
+  const markers = ['#include', 'void main', 'int main', 'main()']
+  let earliest = -1
+  for (const marker of markers) {
+    const regex = new RegExp(`(^|\\n)\\s*${marker.replace(/[()]/g, '\\$&')}`)
+    const m = text.match(regex)
+    if (m && m.index != null) {
+      const idx = m.index + (m[1] ? m[1].length : 0)
+      if (earliest < 0 || idx < earliest) {
+        earliest = idx
+      }
+    }
+  }
+  return earliest
 }
 
 export function isFillProgramQuType(type) {
@@ -46,18 +138,23 @@ export function parseFillProgramContent(content) {
   if (!content) {
     return { stem: '', code: '' }
   }
-  const text = String(content)
-  const idx = text.search(/^\s*(#include|#define|(int|char|void|float|double|long|short|unsigned)\s+\w+\s*\()/m)
+  let text = String(content).trim()
+  text = text.replace(RUN_RESULT_SUFFIX, '').trim()
+
+  const idx = findCodeBlockStart(text)
   if (idx > 0) {
     return {
-      stem: text.substring(0, idx).trim(),
-      code: text.substring(idx).trim()
+      stem: cleanQuestionStem(text.substring(0, idx)),
+      code: formatProgramCode(text.substring(idx))
     }
   }
-  if (looksLikeCode(text)) {
-    return { stem: '', code: text.trim() }
+  if (idx === 0) {
+    return { stem: '', code: formatProgramCode(text) }
   }
-  return { stem: text.trim(), code: '' }
+  if (looksLikeCode(text)) {
+    return { stem: '', code: formatProgramCode(text) }
+  }
+  return { stem: cleanQuestionStem(text), code: '' }
 }
 
 export function fillProgramBlankLabel(index) {
