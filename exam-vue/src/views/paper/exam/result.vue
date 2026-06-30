@@ -60,15 +60,28 @@
 
         </div>
 
-        <div v-if="item.quType === 4">
+        <div v-if="item.quType >= 4 && item.quType <= 9">
 
           <el-row :gutter="24">
 
             <el-col :span="12">
-              我的回答：{{ item.answer }}
+              我的回答：{{ item.answer || '未作答' }}
+            </el-col>
+
+            <el-col :span="12" style="text-align: right; color: #909399;">
+              <span v-if="paperData.hasSaq && paperData.state === 1">待批阅</span>
+              <span v-else-if="item.actualScore != null">得分：{{ item.actualScore }}</span>
             </el-col>
 
           </el-row>
+
+          <div v-if="item.answerList && item.answerList.length" style="margin-top: 10px; color: #24da70">
+            参考答案：
+            <div v-for="(an, idx) in item.answerList" :key="idx" style="margin-top: 4px">
+              <span v-if="item.quType === 4 || item.quType === 5">{{ idx + 1 }}. </span>
+              {{ an.content }}
+            </div>
+          </div>
 
         </div>
 

@@ -168,6 +168,7 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
         List<PaperQuDTO> radioList = new ArrayList<>();
         List<PaperQuDTO> multiList = new ArrayList<>();
         List<PaperQuDTO> judgeList = new ArrayList<>();
+        List<PaperQuDTO> subjList = new ArrayList<>();
         for(PaperQuDTO item: list){
             if(QuType.RADIO.equals(item.getQuType())){
                 radioList.add(item);
@@ -178,11 +179,15 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
             if(QuType.JUDGE.equals(item.getQuType())){
                 judgeList.add(item);
             }
+            if(QuType.isSubjective(item.getQuType())){
+                subjList.add(item);
+            }
         }
 
         respDTO.setRadioList(radioList);
         respDTO.setMultiList(multiList);
         respDTO.setJudgeList(judgeList);
+        respDTO.setSubjList(subjList);
         return respDTO;
     }
 
@@ -310,6 +315,11 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
             paperQu.setActualScore(repo.getJudgeScore());
         }
 
+        if (QuType.isSubjective(qu.getQuType())) {
+            paperQu.setScore(5);
+            paperQu.setActualScore(0);
+        }
+
         return paperQu;
     }
 
@@ -340,7 +350,17 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
         paper.setUpdateTime(new Date());
         paper.setQualifyScore(exam.getQualifyScore());
         paper.setState(PaperState.ING);
-        paper.setHasSaq(false);
+
+        boolean hasSubjective = false;
+        if (!CollectionUtils.isEmpty(quList)) {
+            for (PaperQu item : quList) {
+                if (QuType.isSubjective(item.getQuType())) {
+                    hasSubjective = true;
+                    break;
+                }
+            }
+        }
+        paper.setHasSaq(hasSubjective);
 
         // 截止时间
         Calendar cl = Calendar.getInstance();
@@ -412,11 +432,34 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
     @Override
     public void fillAnswer(PaperAnswerDTO reqDTO) {
 
+        PaperQu paperQu = paperQuService.findByKey(reqDTO.getPaperId(), reqDTO.getQuId());
+        if (paperQu == null) {
+            return;
+        }
+
+        if (QuType.isSubjective(paperQu.getQuType())) {
+            if (StringUtils.isBlank(reqDTO.getAnswer())) {
+                return;
+            }
+            PaperQu qu = new PaperQu();
+            qu.setQuId(reqDTO.getQuId());
+            qu.setPaperId(reqDTO.getPaperId());
+            qu.setAnswer(reqDTO.getAnswer());
+            qu.setAnswered(true);
+            qu.setIsRight(false);
+            qu.setActualScore(0);
+            paperQuService.updateByKey(qu);
+            return;
+        }
 
         // 未作答
         if(CollectionUtils.isEmpty(reqDTO.getAnswers())
                 && StringUtils.isBlank(reqDTO.getAnswer())){
             return;
+        }
+
+        if (reqDTO.getAnswers() == null) {
+            reqDTO.setAnswers(new ArrayList<>());
         }
 
         //查找答案列表
@@ -506,7 +549,7 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
         List<PaperQuDTO> list = paperQuService.listByPaper(paperId);
         for(PaperQuDTO qu: list){
             // 主观题和对的都不加入错题库
-            if(qu.getIsRight()){
+            if(QuType.isSubjective(qu.getQuType()) || qu.getIsRight()){
                 continue;
             }
             //加入错题本

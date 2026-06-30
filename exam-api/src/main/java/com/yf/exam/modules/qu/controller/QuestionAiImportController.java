@@ -57,8 +57,10 @@ public class QuestionAiImportController extends BaseController {
     @RequiresRoles("sa")
     @ApiOperation(value = "重试失败的AI导入任务")
     @PostMapping("/import-task/{taskId}/retry")
-    public ApiRest<QuestionImportTaskStatusRespDTO> retryImportTask(@PathVariable("taskId") String taskId) {
-        return success(questionImportTaskService.retryTask(taskId));
+    public ApiRest<QuestionImportTaskStatusRespDTO> retryImportTask(
+            @PathVariable("taskId") String taskId,
+            @RequestParam(value = "batchNo", required = false) Integer batchNo) {
+        return success(questionImportTaskService.retryTask(taskId, batchNo));
     }
 
     @RequiresRoles("sa")

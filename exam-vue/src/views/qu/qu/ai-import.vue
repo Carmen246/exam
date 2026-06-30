@@ -77,10 +77,35 @@
             icon="el-icon-refresh"
             :loading="retryLoading"
             :disabled="!canRetryTask"
-            @click="handleRetryTask"
+            @click="handleRetryTask()"
           >
-            重试
+            重试全部失败批次
           </el-button>
+        </div>
+
+        <div v-if="failedBatches.length > 0" class="failed-batch-panel">
+          <el-collapse v-model="failedBatchCollapse">
+            <el-collapse-item :title="'失败批次 ' + failedBatches.length + ' 批'" name="failed">
+              <el-table :data="failedBatches" size="mini" border stripe>
+                <el-table-column prop="batchNo" label="批次" width="70" align="center" />
+                <el-table-column prop="errorMessage" label="失败原因" min-width="180" show-overflow-tooltip />
+                <el-table-column prop="previewText" label="文本片段" min-width="200" show-overflow-tooltip />
+                <el-table-column label="操作" width="140" align="center">
+                  <template v-slot="scope">
+                    <el-button type="text" size="mini" @click="showBatchPreview(scope.row)">查看片段</el-button>
+                    <el-button
+                      type="text"
+                      size="mini"
+                      :disabled="!canRetryTask || taskRunning"
+                      @click="handleRetryTask(scope.row.batchNo)"
+                    >
+                      重试
+                    </el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-collapse-item>
+          </el-collapse>
         </div>
       </el-card>
 
@@ -163,14 +188,21 @@
             <div v-else class="question-list">
               <div v-for="(item, index) in questions" :key="index" class="question-item">
                 <div class="question-head">
-                  <div>
-                    <el-tag size="mini" :type="quTypeTag(item.quType)">{{ quTypeLabel(item.quType) }}</el-tag>
-                    <span class="question-title">{{ index + 1 }}. {{ item.content }}</span>
+                  <div class="question-head-main">
+                    <div class="question-index-line">
+                      <el-tag size="mini" :type="quTypeTag(item.quType)">{{ quTypeLabel(item.quType) }}</el-tag>
+                      <span class="question-index">{{ index + 1 }}.</span>
+                    </div>
+                    <formatted-text
+                      :text="item.content"
+                      :code="needsCodeFormat(item.quType, item.content)"
+                      class="question-content"
+                    />
                   </div>
                   <el-button type="text" class="danger-link" :disabled="taskRunning" @click="removeQuestion(index)">删除</el-button>
                 </div>
 
-                <div class="answer-list">
+                <div v-if="isObjectiveQuType(item.quType)" class="answer-list">
                   <div
                     v-for="(answer, answerIndex) in item.answerList"
                     :key="answerIndex"
@@ -178,17 +210,48 @@
                     :class="{ right: answer.isRight }"
                   >
                     <span class="answer-prefix">{{ optionLabel(answerIndex) }}.</span>
-                    <span class="answer-content">{{ answer.content }}</span>
+                    <formatted-text :text="answer.content" class="answer-content" />
                     <el-tag v-if="answer.isRight" size="mini" type="success">正确</el-tag>
 
                     <div v-if="answer.analysis" class="answer-analysis">
-                      答案解析：{{ answer.analysis }}
+                      答案解析：<formatted-text :text="answer.analysis" />
                     </div>
                   </div>
                 </div>
 
+                <div v-else-if="isFillQuType(item.quType) && item.answerList && item.answerList.length" class="answer-list">
+                  <div class="answer-section-title">参考答案</div>
+                  <div
+                    v-for="(answer, answerIndex) in item.answerList"
+                    :key="answerIndex"
+                    class="answer-item reference-item"
+                  >
+                    <span class="answer-prefix">{{ answerIndex + 1 }}.</span>
+                    <formatted-text :text="answer.content" class="answer-content" />
+                  </div>
+                </div>
+
+                <div v-else-if="item.answerList && item.answerList.length" class="reference-block">
+                  <div class="answer-section-title">参考答案/评分要点</div>
+                  <div
+                    v-for="(answer, answerIndex) in item.answerList"
+                    :key="answerIndex"
+                    class="reference-text"
+                  >
+                    <formatted-text
+                      :text="answer.content"
+                      :code="needsCodeFormat(item.quType, answer.content)"
+                    />
+                  </div>
+                </div>
+
+                <div v-else-if="isSubjectiveQuType(item.quType)" class="reference-block">
+                  <el-tag size="mini" type="info">主观题（暂无参考答案）</el-tag>
+                </div>
+
                 <div v-if="item.analysis" class="analysis">
-                  整体解析：{{ item.analysis }}
+                  <div class="answer-section-title">整体解析</div>
+                  <formatted-text :text="item.analysis" />
                 </div>
               </div>
             </div>
@@ -203,6 +266,27 @@
         </el-col>
       </el-row>
     </el-card>
+
+    <el-dialog
+      title="批次文本片段"
+      :visible.sync="batchPreviewDialogVisible"
+      width="760px"
+      append-to-body
+    >
+      <div v-if="batchPreviewItem.batchNo" class="batch-preview-meta">
+        第 {{ batchPreviewItem.batchNo }} 批
+        <span v-if="batchPreviewItem.errorMessage"> · {{ batchPreviewItem.errorMessage }}</span>
+      </div>
+      <el-input
+        v-model="batchPreviewItem.previewText"
+        type="textarea"
+        :rows="12"
+        readonly
+      />
+      <div slot="footer">
+        <el-button @click="batchPreviewDialogVisible = false">关闭</el-button>
+      </div>
+    </el-dialog>
 
     <el-dialog
       title="清洗前文本"
@@ -225,11 +309,14 @@
 
 <script>
 import RepoSelect from '@/components/RepoSelect'
+import FormattedText from '@/components/FormattedText'
 import { createImportTask, getImportTaskStatus, retryImportTask, confirmQuestionImport, TASK_POLL_INTERVAL } from '@/api/qu/qu'
+import { quTypeFilter, isObjectiveQuType, isFillQuType, isSubjectiveQuType } from '@/filters'
+import { needsCodeFormat } from '@/utils/quFormat'
 
 export default {
   name: 'AiImportQu',
-  components: { RepoSelect },
+  components: { RepoSelect, FormattedText },
   data() {
     return {
       pendingFile: null,
@@ -263,6 +350,10 @@ export default {
       taskCompletedBatches: 0,
       taskFailedBatchCount: 0,
       taskDeepCleanBatchCount: 0,
+      taskBatches: [],
+      failedBatchCollapse: ['failed'],
+      batchPreviewDialogVisible: false,
+      batchPreviewItem: {},
       lastPolledStatus: '',
       taskHasNormalizedText: false,
       retryLoading: false,
@@ -322,6 +413,9 @@ export default {
         return false
       }
       return this.taskFailed || (this.taskPartialCompleted && this.taskFailedBatchCount > 0)
+    },
+    failedBatches() {
+      return (this.taskBatches || []).filter(item => item.status === 'FAILED')
     },
     taskProgressTitle() {
       if (this.taskRunning) {
@@ -474,13 +568,13 @@ export default {
       })
     },
 
-    handleRetryTask() {
+    handleRetryTask(batchNo) {
       if (!this.taskId || (!this.taskFailed && !this.taskPartialCompleted)) {
         return
       }
 
       this.retryLoading = true
-      retryImportTask(this.taskId).then(res => {
+      retryImportTask(this.taskId, batchNo).then(res => {
         const data = res.data || {}
         this.taskFailed = false
         this.taskPartialCompleted = false
@@ -488,11 +582,17 @@ export default {
         this.retryLoading = false
         this.lastPolledStatus = ''
         this.applyTaskStatus(data)
-        this.$message.info(data.message || '正在重试失败批次')
+        const tip = batchNo ? ('正在重试第 ' + batchNo + ' 批') : (data.message || '正在重试失败批次')
+        this.$message.info(tip)
         this.startPolling()
       }, () => {
         this.retryLoading = false
       })
+    },
+
+    showBatchPreview(row) {
+      this.batchPreviewItem = Object.assign({}, row)
+      this.batchPreviewDialogVisible = true
     },
 
     notifyStatusChange(prevStatus, data) {
@@ -532,6 +632,7 @@ export default {
       this.taskCompletedBatches = data.completedBatches || 0
       this.taskFailedBatchCount = data.failedBatchCount || 0
       this.taskDeepCleanBatchCount = data.deepCleanBatchCount || 0
+      this.taskBatches = data.batches || []
     },
 
     handleTaskPartialCompleted(data) {
@@ -576,6 +677,7 @@ export default {
       this.taskCompletedBatches = 0
       this.taskFailedBatchCount = 0
       this.taskDeepCleanBatchCount = 0
+      this.taskBatches = []
       this.taskHasNormalizedText = false
       if (clearLastStatus) {
         this.lastPolledStatus = ''
@@ -642,22 +744,28 @@ export default {
     },
 
     quTypeLabel(type) {
-      const map = {
-        1: '单选题',
-        2: '多选题',
-        3: '判断题'
-      }
-      return map[type] || '未知题型'
+      return quTypeFilter(String(type)) || '未知题型'
     },
 
     quTypeTag(type) {
       const map = {
         1: '',
         2: 'warning',
-        3: 'info'
+        3: 'info',
+        4: 'success',
+        5: 'success',
+        6: '',
+        7: 'warning',
+        8: 'danger',
+        9: 'info'
       }
       return map[type] || 'danger'
     },
+
+    isObjectiveQuType,
+    isFillQuType,
+    isSubjectiveQuType,
+    needsCodeFormat,
 
     optionLabel(index) {
       return String.fromCharCode(65 + index)
@@ -734,6 +842,16 @@ export default {
   justify-content: space-between;
   margin-top: 14px;
   gap: 12px;
+}
+
+.failed-batch-panel {
+  margin-top: 14px;
+}
+
+.batch-preview-meta {
+  margin-bottom: 10px;
+  color: #606266;
+  font-size: 13px;
 }
 
 .task-retry-hint {
@@ -827,10 +945,26 @@ export default {
   gap: 12px;
 }
 
-.question-title {
-  margin-left: 8px;
+.question-head-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.question-index-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.question-index {
   font-weight: 600;
-  line-height: 24px;
+  color: #303133;
+}
+
+.question-content {
+  color: #303133;
+  font-weight: 500;
 }
 
 .danger-link {
@@ -861,6 +995,12 @@ export default {
   min-width: 120px;
 }
 
+.answer-content.formatted-text,
+.answer-content >>> .formatted-text {
+  flex: 1;
+  min-width: 120px;
+}
+
 .answer-analysis {
   flex-basis: 100%;
   margin-left: 26px;
@@ -876,6 +1016,26 @@ export default {
   background: #f7f8fa;
   border-radius: 4px;
   line-height: 22px;
+}
+
+.answer-section-title {
+  margin-bottom: 6px;
+  color: #303133;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.reference-block {
+  margin-top: 8px;
+  padding-left: 8px;
+}
+
+.reference-text {
+  margin-top: 6px;
+}
+
+.reference-item {
+  margin-top: 4px;
 }
 
 @media (max-width: 992px) {

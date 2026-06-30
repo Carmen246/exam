@@ -1,5 +1,6 @@
 package com.yf.exam.modules.qu.dto;
 
+import com.yf.exam.modules.qu.dto.ImportBatchStatusDTO;
 import com.yf.exam.modules.qu.dto.ext.QuDetailDTO;
 import io.swagger.annotations.ApiModel;
 import io.swagger.annotations.ApiModelProperty;
@@ -61,4 +62,7 @@ public class QuestionImportTaskStatusRespDTO implements Serializable {
 
     @ApiModelProperty("失败原因")
     private String errorMessage;
+
+    @ApiModelProperty("批次明细")
+    private List<ImportBatchStatusDTO> batches;
 }

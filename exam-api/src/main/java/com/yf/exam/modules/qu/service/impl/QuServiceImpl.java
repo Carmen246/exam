@@ -245,39 +245,79 @@ public class QuServiceImpl extends ServiceImpl<QuMapper, Qu> implements QuServic
             throw new ServiceException(1, no + "至少要选择一个题库！");
         }
 
+        if (qu.getQuType() == null) {
+            throw new ServiceException(1, no + "题目类型不能为空！");
+        }
+
+        if (QuType.isObjective(qu.getQuType())) {
+            checkObjectiveData(qu, no);
+        } else if (QuType.isSubjective(qu.getQuType())) {
+            checkSubjectiveData(qu, no);
+        } else {
+            throw new ServiceException(1, no + "题目类型不支持！");
+        }
+
+    }
+
+    private void checkObjectiveData(QuDetailDTO qu, String no) {
+
         List<QuAnswerDTO> answers = qu.getAnswerList();
 
+        if (CollectionUtils.isEmpty(answers)) {
+            throw new ServiceException(1, no + "客观题至少要包含一个备选答案！");
+        }
 
+        int trueCount = 0;
+        for (QuAnswerDTO a : answers) {
+
+            if (a.getIsRight() == null) {
+                throw new ServiceException(1, no + "必须定义选项是否正确项！");
+            }
+
+            if (StringUtils.isEmpty(a.getContent())) {
+                throw new ServiceException(1, no + "选项内容不为空！");
+            }
+
+            if (a.getIsRight()) {
+                trueCount += 1;
+            }
+        }
+
+        if (trueCount == 0) {
+            throw new ServiceException(1, no + "至少要包含一个正确项！");
+        }
+
+        if (qu.getQuType().equals(QuType.RADIO) && trueCount > 1) {
+            throw new ServiceException(1, no + "单选题不能包含多个正确项！");
+        }
+    }
+
+    private void checkSubjectiveData(QuDetailDTO qu, String no) {
+
+        List<QuAnswerDTO> answers = qu.getAnswerList();
+
+        if (QuType.isFillType(qu.getQuType())) {
             if (CollectionUtils.isEmpty(answers)) {
-                throw new ServiceException(1, no + "客观题至少要包含一个备选答案！");
+                throw new ServiceException(1, no + "填空题至少要包含一个参考答案！");
             }
-
-
-            int trueCount = 0;
             for (QuAnswerDTO a : answers) {
-
-                if (a.getIsRight() == null) {
-                    throw new ServiceException(1, no + "必须定义选项是否正确项！");
-                }
-
                 if (StringUtils.isEmpty(a.getContent())) {
-                    throw new ServiceException(1, no + "选项内容不为空！");
+                    throw new ServiceException(1, no + "参考答案内容不能为空！");
                 }
+                a.setIsRight(Boolean.TRUE);
+            }
+            return;
+        }
 
-                if (a.getIsRight()) {
-                    trueCount += 1;
+        if (!CollectionUtils.isEmpty(answers)) {
+            for (QuAnswerDTO a : answers) {
+                if (StringUtils.isEmpty(a.getContent())) {
+                    throw new ServiceException(1, no + "参考答案/评分要点内容不能为空！");
+                }
+                if (a.getIsRight() == null) {
+                    a.setIsRight(Boolean.TRUE);
                 }
             }
-
-            if (trueCount == 0) {
-                throw new ServiceException(1, no + "至少要包含一个正确项！");
-            }
-
-
-            //单选题
-            if (qu.getQuType().equals(QuType.RADIO) && trueCount > 1) {
-                throw new ServiceException(1, no + "单选题不能包含多个正确项！");
-            }
-
+        }
     }
 }

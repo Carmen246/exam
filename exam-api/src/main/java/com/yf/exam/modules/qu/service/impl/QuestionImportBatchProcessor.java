@@ -5,6 +5,7 @@ import com.yf.exam.modules.qu.config.QuestionAiProperties;
 import com.yf.exam.modules.qu.dto.QuestionParseReqDTO;
 import com.yf.exam.modules.qu.dto.QuestionParseRespDTO;
 import com.yf.exam.modules.qu.dto.ext.QuDetailDTO;
+import com.yf.exam.modules.qu.entity.QuestionImportBatchState;
 import com.yf.exam.modules.qu.enums.QuestionImportMode;
 import com.yf.exam.modules.qu.service.QuestionAiParseService;
 import com.yf.exam.modules.qu.service.QuestionDocumentParseService;
@@ -29,10 +30,12 @@ public class QuestionImportBatchProcessor {
     private QuestionAiProperties questionAiProperties;
 
     public BatchProcessResult processBatch(String chunk, QuestionImportMode mode, QuestionParseReqDTO baseReq,
-            String batchNo) {
+            String batchNo, QuestionImportBatchState state, boolean retrying) {
         if (StringUtils.isBlank(chunk)) {
             throw new ServiceException("批次文本为空");
         }
+
+        state.markRunning(retrying ? QuestionImportBatchState.PHASE_RETRY : QuestionImportBatchState.PHASE_PARSE);
 
         String localText = documentParseService.normalizeLocally(chunk);
         if (StringUtils.isBlank(localText)) {
@@ -40,7 +43,9 @@ public class QuestionImportBatchProcessor {
         }
 
         if (mode == QuestionImportMode.DEEP) {
+            state.setPhase(QuestionImportBatchState.PHASE_DEEP_NORMALIZE);
             String deepText = questionAiParseService.normalizeSingleBatch(localText, batchNo);
+            state.setPhase(retrying ? QuestionImportBatchState.PHASE_RETRY : QuestionImportBatchState.PHASE_PARSE);
             List<QuDetailDTO> questions = parseBatchText(deepText, baseReq, batchNo);
             return BatchProcessResult.success(questions, true);
         }
@@ -57,7 +62,9 @@ public class QuestionImportBatchProcessor {
             }
             return BatchProcessResult.success(questions, false);
         } catch (Exception e) {
+            state.setPhase(QuestionImportBatchState.PHASE_DEEP_NORMALIZE);
             String deepText = questionAiParseService.normalizeSingleBatch(localText, batchNo);
+            state.setPhase(retrying ? QuestionImportBatchState.PHASE_RETRY : QuestionImportBatchState.PHASE_PARSE);
             List<QuDetailDTO> questions = parseBatchText(deepText, baseReq, batchNo);
             return BatchProcessResult.success(questions, true);
         }

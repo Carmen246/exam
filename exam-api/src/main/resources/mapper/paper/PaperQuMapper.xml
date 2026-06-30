@@ -35,7 +35,7 @@
 		SELECT IFNULL(SUM(actual_score),0) as total
 		FROM el_paper_qu
 		WHERE paper_id=#{paperId}
-		AND qu_type=4
+		AND qu_type &gt;= 4
 	</select>
 
     <resultMap id="ListResultMap" extends="BaseResultMap" type="com.yf.exam.modules.paper.dto.ext.PaperQuDetailDTO">

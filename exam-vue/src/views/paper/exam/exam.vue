@@ -48,6 +48,13 @@
             </el-row>
           </div>
 
+          <div v-if="paperData.subjList!==undefined && paperData.subjList.length > 0">
+            <p class="card-title">主观题</p>
+            <el-row :gutter="24" class="card-line">
+              <el-tag v-for="item in paperData.subjList" :key="item.quId" :type="cardItemClass(item.answered, item.quId)" @click="handSave(item)">{{ item.sort+1 }}</el-tag>
+            </el-row>
+          </div>
+
         </el-card>
 
       </el-col>
@@ -55,7 +62,13 @@
       <el-col :span="19" :xs="24">
 
         <el-card class="qu-content content-h">
-          <p v-if="quData.content">{{ quData.sort + 1 }}.{{ quData.content }}</p>
+          <div v-if="quData.content" class="qu-title-line">{{ quData.sort + 1 }}.</div>
+          <formatted-text
+            v-if="quData.content"
+            :text="quData.content"
+            :code="needsCodeFormat(quData.quType, quData.content)"
+            class="qu-stem"
+          />
           <p v-if="quData.image!=null && quData.image!=''">
             <el-image :src="quData.image" style="max-width:100%;" />
           </p>
@@ -79,6 +92,16 @@
               </el-checkbox>
             </el-checkbox-group>
 
+          </div>
+
+          <div v-if="isSubjectiveQuType(quData.quType)">
+            <el-input
+              v-model="subjValue"
+              type="textarea"
+              :rows="quData.quType >= 6 ? 12 : 4"
+              placeholder="请输入你的答案"
+            />
+            <p v-if="paperData.hasSaq" class="subj-tip">本题为人工批阅题，提交后需等待阅卷</p>
           </div>
 
           <div style="margin-top: 20px">
@@ -105,10 +128,13 @@
 import { paperDetail, quDetail, handExam, fillAnswer } from '@/api/paper/exam'
 import { Loading } from 'element-ui'
 import ExamTimer from '@/views/paper/exam/components/ExamTimer'
+import FormattedText from '@/components/FormattedText'
+import { isSubjectiveQuType } from '@/filters'
+import { needsCodeFormat } from '@/utils/quFormat'
 
 export default {
   name: 'ExamProcess',
-  components: { ExamTimer },
+  components: { ExamTimer, FormattedText },
   data() {
     return {
       // 全屏/不全屏
@@ -132,12 +158,16 @@ export default {
         leftSeconds: 99999,
         radioList: [],
         multiList: [],
-        judgeList: []
+        judgeList: [],
+        subjList: [],
+        hasSaq: false
       },
       // 单选选定值
       radioValue: '',
       // 多选选定值
       multiValue: [],
+      // 主观题答案
+      subjValue: '',
       // 已答ID
       answeredIds: []
     }
@@ -191,6 +221,14 @@ export default {
           notAnswered += 1
         }
       })
+
+      if (this.paperData.subjList) {
+        this.paperData.subjList.forEach(function(item) {
+          if (!item.answered) {
+            notAnswered += 1
+          }
+        })
+      }
 
       return notAnswered
     },
@@ -255,6 +293,9 @@ export default {
       })
     },
 
+    isSubjectiveQuType,
+    needsCodeFormat,
+
     // 保存答案
     handSave(item, callback) {
       if (item.id === this.allItem[0].id) {
@@ -272,16 +313,28 @@ export default {
         this.showNext = true
       }
 
-      const answers = this.multiValue
-      if (this.radioValue !== '') {
-        answers.push(this.radioValue)
+      let params
+      if (isSubjectiveQuType(this.quData.quType)) {
+        params = {
+          paperId: this.paperId,
+          quId: this.cardItem.quId,
+          answers: [],
+          answer: this.subjValue || ''
+        }
+      } else {
+        const answers = [...this.multiValue]
+        if (this.radioValue !== '') {
+          answers.push(this.radioValue)
+        }
+        params = { paperId: this.paperId, quId: this.cardItem.quId, answers: answers, answer: '' }
       }
 
-      const params = { paperId: this.paperId, quId: this.cardItem.quId, answers: answers, answer: '' }
       fillAnswer(params).then(() => {
-        // 必须选择一个值
-        if (answers.length > 0) {
-          // 加入已答列表
+        if (isSubjectiveQuType(this.quData.quType)) {
+          if (this.subjValue && this.subjValue.trim()) {
+            this.cardItem.answered = true
+          }
+        } else if (params.answers.length > 0) {
           this.cardItem.answered = true
         }
 
@@ -313,17 +366,20 @@ export default {
         this.quData = response.data
         this.radioValue = ''
         this.multiValue = []
+        this.subjValue = this.quData.answer || ''
 
         // 填充该题目的答案
-        this.quData.answerList.forEach((item) => {
-          if ((this.quData.quType === 1 || this.quData.quType === 3) && item.checked) {
-            this.radioValue = item.id
-          }
+        if (this.quData.answerList) {
+          this.quData.answerList.forEach((item) => {
+            if ((this.quData.quType === 1 || this.quData.quType === 3) && item.checked) {
+              this.radioValue = item.id
+            }
 
-          if (this.quData.quType === 2 && item.checked) {
-            this.multiValue.push(item.id)
-          }
-        })
+            if (this.quData.quType === 2 && item.checked) {
+              this.multiValue.push(item.id)
+            }
+          })
+        }
 
         // 关闭详情
         loading.close()
@@ -344,6 +400,8 @@ export default {
           this.cardItem = this.paperData.multiList[0]
         } else if (this.paperData.judgeList && this.paperData.judgeList.length>0) {
           this.cardItem = this.paperData.judgeList[0]
+        } else if (this.paperData.subjList && this.paperData.subjList.length>0) {
+          this.cardItem = this.paperData.subjList[0]
         }
 
         const that = this
@@ -360,8 +418,15 @@ export default {
           that.allItem.push(item)
         })
 
-        // 当前选定
-        this.fetchQuData(this.cardItem)
+        if (this.paperData.subjList) {
+          this.paperData.subjList.forEach(function(item) {
+            that.allItem.push(item)
+          })
+        }
+
+        if (this.cardItem && this.cardItem.quId) {
+          this.fetchQuData(this.cardItem)
+        }
       })
     }
 
@@ -436,6 +501,21 @@ export default {
   ::v-deep
   .el-radio__label{
     line-height: 30px;
+  }
+
+  .subj-tip {
+    margin-top: 8px;
+    color: #909399;
+    font-size: 13px;
+  }
+
+  .qu-stem {
+    margin-bottom: 12px;
+  }
+
+  .qu-title-line {
+    font-weight: 600;
+    margin-bottom: 4px;
   }
 
 </style>

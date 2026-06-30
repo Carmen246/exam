@@ -268,6 +268,30 @@ export default {
         {
           value: 3,
           label: '判断题'
+        },
+        {
+          value: 4,
+          label: '填空题'
+        },
+        {
+          value: 5,
+          label: '程序填空题'
+        },
+        {
+          value: 6,
+          label: '阅读程序写结果题'
+        },
+        {
+          value: 7,
+          label: '编程题'
+        },
+        {
+          value: 8,
+          label: '程序改错题'
+        },
+        {
+          value: 9,
+          label: '综合应用题'
         }
       ],
 

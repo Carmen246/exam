@@ -86,8 +86,12 @@ export function getImportTaskStatus(taskId) {
  * 重试失败的 AI 导入任务
  * @param taskId
  */
-export function retryImportTask(taskId) {
-  return post('/exam/api/qu/import-task/' + taskId + '/retry')
+export function retryImportTask(taskId, batchNo) {
+  let url = '/exam/api/qu/import-task/' + taskId + '/retry'
+  if (batchNo) {
+    url += '?batchNo=' + batchNo
+  }
+  return post(url)
 }
 
 export { TASK_POLL_INTERVAL }

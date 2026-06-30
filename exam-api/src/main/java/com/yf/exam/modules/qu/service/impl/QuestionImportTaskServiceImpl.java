@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.yf.exam.ability.upload.config.UploadConfig;
 import com.yf.exam.core.exception.ServiceException;
 import com.yf.exam.modules.qu.config.QuestionAiProperties;
+import com.yf.exam.modules.qu.dto.ImportBatchStatusDTO;
 import com.yf.exam.modules.qu.dto.QuestionImportTaskCreateRespDTO;
 import com.yf.exam.modules.qu.dto.QuestionImportTaskStatusRespDTO;
 import com.yf.exam.modules.qu.dto.QuestionParseReqDTO;
@@ -122,7 +123,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
 
         try {
             extractText(task);
-            runBatchPipeline(task, false);
+            runBatchPipeline(task, false, null);
         } catch (Exception e) {
             failTask(task, e);
         } finally {
@@ -133,6 +134,11 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
 
     @Override
     public QuestionImportTaskStatusRespDTO retryTask(String taskId) {
+        return retryTask(taskId, null);
+    }
+
+    @Override
+    public QuestionImportTaskStatusRespDTO retryTask(String taskId, Integer batchNo) {
         cleanupExpiredTasks();
         QuestionImportTask task = tasks.get(taskId);
         if (task == null) {
@@ -149,14 +155,25 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
             throw new ServiceException("没有可重试的批次，请重新创建导入任务");
         }
 
+        if (batchNo != null) {
+            if (batchNo <= 0 || batchNo > task.getBatchStates().size()) {
+                throw new ServiceException("批次序号无效：" + batchNo);
+            }
+            QuestionImportBatchState target = task.getBatchStates().get(batchNo - 1);
+            if (!target.isFailed()) {
+                throw new ServiceException("第" + batchNo + "批未失败，无需重试");
+            }
+        }
+
         task.setErrorMessage(null);
         task.setStatus(QuestionImportTaskStatus.PARSING);
         task.setProgress(PROGRESS_PARSE_START);
-        task.setMessage("正在重试失败批次...");
+        task.setMessage(batchNo == null ? "正在重试失败批次..." : "正在重试第" + batchNo + "批...");
 
+        final Integer retryBatchNo = batchNo;
         asyncExecutor.execute(() -> {
             try {
-                runBatchPipeline(task, true);
+                runBatchPipeline(task, true, retryBatchNo);
             } catch (Exception e) {
                 failTask(task, e);
             }
@@ -190,7 +207,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
         task.setMessage("文档提取完成，共 " + task.getRawText().length() + " 字，正在切分批次...");
     }
 
-    private void runBatchPipeline(QuestionImportTask task, boolean retryFailedOnly) {
+    private void runBatchPipeline(QuestionImportTask task, boolean retryFailedOnly, Integer retryBatchNo) {
         QuestionImportMode mode = QuestionImportMode.from(task.getImportMode());
 
         if (!retryFailedOnly || CollectionUtils.isEmpty(task.getBatchStates())) {
@@ -208,10 +225,16 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
         final List<QuestionImportBatchState> batchStates = task.getBatchStates();
         List<Integer> workIndices = new ArrayList<>();
         if (retryFailedOnly) {
-            for (QuestionImportBatchState state : batchStates) {
-                if (state.isFailed()) {
-                    state.resetForRetry();
-                    workIndices.add(state.getBatchIndex());
+            if (retryBatchNo != null) {
+                QuestionImportBatchState state = batchStates.get(retryBatchNo - 1);
+                state.resetForRetry();
+                workIndices.add(state.getBatchIndex());
+            } else {
+                for (QuestionImportBatchState state : batchStates) {
+                    if (state.isFailed()) {
+                        state.resetForRetry();
+                        workIndices.add(state.getBatchIndex());
+                    }
                 }
             }
             if (workIndices.isEmpty()) {
@@ -245,7 +268,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
                     String batchNo = String.valueOf(index + 1);
                     try {
                         QuestionImportBatchProcessor.BatchProcessResult result = batchProcessor.processBatch(
-                                state.getChunkText(), mode, baseReq, batchNo);
+                                state.getChunkText(), mode, baseReq, batchNo, state, retryFailedOnly);
                         state.markSuccess(result.getQuestions(), result.isDeepCleanUsed());
                         if (result.isDeepCleanUsed()) {
                             deepCleanCount.incrementAndGet();
@@ -329,7 +352,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
         if (failed > 0) {
             task.setStatus(QuestionImportTaskStatus.PARTIAL_COMPLETED);
             task.setProgress(100);
-            task.setMessage("成功识别 " + merged.size() + " 题，失败 " + failed + " 批，可重试失败批次");
+            task.setMessage(buildPartialCompletedMessage(task, merged.size(), failed));
             task.setErrorMessage(null);
             return;
         }
@@ -369,6 +392,10 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
     private void failTask(QuestionImportTask task, Exception e) {
         task.setStatus(QuestionImportTaskStatus.FAILED);
         String message = e instanceof ServiceException ? e.getMessage() : "导入任务处理失败：" + e.getMessage();
+        String failedNos = formatFailedBatchNos(task);
+        if (StringUtils.isNotBlank(failedNos)) {
+            message = message + "（失败批次：" + failedNos + "）";
+        }
         task.setErrorMessage(message);
         task.setMessage(message);
         mergeQuestionsFromBatches(task);
@@ -486,6 +513,45 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
         }
     }
 
+    private String buildPartialCompletedMessage(QuestionImportTask task, int questionCount, int failedCount) {
+        String failedNos = formatFailedBatchNos(task);
+        if (StringUtils.isNotBlank(failedNos)) {
+            return "成功识别 " + questionCount + " 题，失败 " + failedCount + " 批（" + failedNos + "），可重试失败批次";
+        }
+        return "成功识别 " + questionCount + " 题，失败 " + failedCount + " 批，可重试失败批次";
+    }
+
+    private String formatFailedBatchNos(QuestionImportTask task) {
+        if (CollectionUtils.isEmpty(task.getBatchStates())) {
+            return "";
+        }
+        List<String> nos = new ArrayList<>();
+        for (QuestionImportBatchState state : task.getBatchStates()) {
+            if (state.isFailed()) {
+                nos.add(String.valueOf(state.getBatchIndex() + 1));
+            }
+        }
+        return String.join("、", nos);
+    }
+
+    private List<ImportBatchStatusDTO> toBatchStatusList(QuestionImportTask task) {
+        if (CollectionUtils.isEmpty(task.getBatchStates())) {
+            return new ArrayList<>();
+        }
+        List<ImportBatchStatusDTO> batches = new ArrayList<>();
+        for (QuestionImportBatchState state : task.getBatchStates()) {
+            ImportBatchStatusDTO dto = new ImportBatchStatusDTO();
+            dto.setBatchNo(state.getBatchIndex() + 1);
+            dto.setPhase(state.getPhase());
+            dto.setStatus(state.getStatus());
+            dto.setQuestionCount(state.getQuestionCount());
+            dto.setErrorMessage(state.getErrorMessage());
+            dto.setPreviewText(state.getPreviewText());
+            batches.add(dto);
+        }
+        return batches;
+    }
+
     private QuestionImportTaskStatusRespDTO toStatusResp(QuestionImportTask task) {
         QuestionImportTaskStatusRespDTO resp = new QuestionImportTaskStatusRespDTO();
         resp.setTaskId(task.getTaskId());
@@ -500,6 +566,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
         resp.setImportMode(task.getImportMode());
         resp.setFileName(task.getFileName());
         resp.setErrorMessage(task.getErrorMessage());
+        resp.setBatches(toBatchStatusList(task));
 
         boolean exposeResult = task.getStatus() == QuestionImportTaskStatus.COMPLETED
                 || task.getStatus() == QuestionImportTaskStatus.PARTIAL_COMPLETED

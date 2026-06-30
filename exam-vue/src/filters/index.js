@@ -26,9 +26,39 @@ export function quTypeFilter(value) {
   const map = {
     '1': '单选题',
     '2': '多选题',
-    '3': '判断题'
+    '3': '判断题',
+    '4': '填空题',
+    '5': '程序填空题',
+    '6': '阅读程序写结果题',
+    '7': '编程题',
+    '8': '程序改错题',
+    '9': '综合应用题'
   }
   return map[value]
+}
+
+export const QU_TYPE_OPTIONS = [
+  { value: 1, label: '单选题' },
+  { value: 2, label: '多选题' },
+  { value: 3, label: '判断题' },
+  { value: 4, label: '填空题' },
+  { value: 5, label: '程序填空题' },
+  { value: 6, label: '阅读程序写结果题' },
+  { value: 7, label: '编程题' },
+  { value: 8, label: '程序改错题' },
+  { value: 9, label: '综合应用题' }
+]
+
+export function isObjectiveQuType(type) {
+  return type === 1 || type === 2 || type === 3
+}
+
+export function isFillQuType(type) {
+  return type === 4 || type === 5
+}
+
+export function isSubjectiveQuType(type) {
+  return type >= 4 && type <= 9
 }
 
 export function paperStateFilter(value) {

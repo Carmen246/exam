@@ -54,13 +54,26 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
     private static final String SYSTEM_PROMPT =
             "你是在线考试系统的试题解析器。你只能返回合法 json，不要返回 Markdown，不要解释，不要使用代码块。"
-                    + "题型编码固定为：1=单选题，2=多选题，3=判断题。"
-                    + "只解析客观题，无法确定答案的题目不要输出。"
-                  + "返回格式必须是："
-                  + "{\"questions\":[{\"quType\":1,\"level\":1,\"content\":\"题干\","
-                  + "\"analysis\":\"整体解析，说明本题考查点和正确答案依据，不能为空\",\"image\":\"\",\"remark\":\"\","
-                  + "\"repoIds\":[],\"answerList\":[{\"content\":\"选项内容\","
-                  + "\"isRight\":true,\"image\":\"\",\"analysis\":\"答案解析，说明该选项为什么正确或错误，不能为空\"}]}]}";
+                    + "题型编码固定为：1=单选题，2=多选题，3=判断题，4=填空题，5=程序填空题，"
+                    + "6=阅读程序写结果题，7=编程题，8=程序改错题，9=综合应用题。"
+                    + "只能按原题型解析，不要把填空题/编程题改造成选择题。"
+                    + "如果题目有 A/B/C/D 选项，解析为单选或多选。"
+                    + "如果题目要求判断正误，解析为判断题。"
+                    + "如果题目含“请填空”“程序填空”，解析为填空题(4)或程序填空题(5)。"
+                    + "如果题目要求“阅读程序写结果”，解析为阅读程序写结果题(6)。"
+                    + "如果题目要求“编写程序”，解析为编程题(7)。"
+                    + "如果题目要求“改错”，解析为程序改错题(8)。"
+                    + "如果题目属于综合应用，解析为综合应用题(9)。"
+                    + "主观题(4-9)的 answerList 存参考答案或评分要点，isRight=true；"
+                    + "阅读/编程/改错/综合题允许 answerList 为空。"
+                    + "含程序代码的题目（5/6/7/8/9），content 和 answerList.content 必须保留原始换行与缩进，"
+                    + "JSON 字符串中用 \\n 表示换行，不要把多行代码合并成一行；"
+                    + "编程题 content 建议：题干描述后空一行，再逐行输出代码。"
+                    + "返回格式必须是："
+                    + "{\"questions\":[{\"quType\":1,\"level\":1,\"content\":\"题干\","
+                    + "\"analysis\":\"整体解析，说明本题考查点和正确答案依据，不能为空\",\"image\":\"\",\"remark\":\"\","
+                    + "\"repoIds\":[],\"answerList\":[{\"content\":\"选项或参考答案内容\","
+                    + "\"isRight\":true,\"image\":\"\",\"analysis\":\"答案解析，说明依据，不能为空\"}]}]}";
     private static final String NORMALIZE_SYSTEM_PROMPT =
             "你是试题文本清洗助手，负责把从 Word、PDF、OCR 或复制粘贴中抽取出的混乱试题文本整理为规范纯文本。"
                     + "要求："
@@ -525,17 +538,22 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     private String buildUserPrompt(QuestionParseReqDTO reqDTO) {
         return "请把下面的试题文本解析为在线考试系统可导入的 json。\n"
                 + "要求：\n"
-                + "1. 单选题 quType=1，只能有一个正确答案。\n"
-                + "2. 多选题 quType=2，可以有多个正确答案。\n"
-                + "3. 判断题 quType=3，选项固定为：正确、错误。\n"
-                + "4. 每道题必须包含 content、quType、answerList。\n"
-                + "5. repoIds 使用：" + JSON.toJSONString(reqDTO.getRepoIds()) + "。\n"
-                + "6. level 使用：" + (reqDTO.getLevel() == null ? 1 : reqDTO.getLevel()) + "。\n"
-                + "7. 必须生成整体解析：每道题的 analysis 字段不能为空，要说明本题考查点、正确答案依据。\n"
-                + "8. 必须生成答案解析：answerList 中每个选项的 analysis 字段不能为空，要说明该选项为什么正确或错误。\n"
-                + "9. 如果原文没有解析，也要根据题干、选项和答案生成简洁解析。\n"
-                + "10. 不允许把 analysis 返回为空字符串。\n"
-                + "11. 不要编造题目，不要输出无法判断答案的题目。\n\n"
+                + "1. 只能按原题型解析，不要把填空题/编程题改造成选择题。\n"
+                + "2. 单选题 quType=1，只能有一个正确答案。\n"
+                + "3. 多选题 quType=2，至少有一个正确答案。\n"
+                + "4. 判断题 quType=3，选项固定为：正确、错误。\n"
+                + "5. 填空题 quType=4，程序填空题 quType=5，answerList 存参考答案，可多个，isRight=true。\n"
+                + "6. 阅读程序写结果题 quType=6，编程题 quType=7，程序改错题 quType=8，综合应用题 quType=9。\n"
+                + "7. 题型 6-9 允许 answerList 为空，但建议提供参考答案或评分要点。\n"
+                + "8. 每道题必须包含 content、quType。\n"
+                + "9. repoIds 使用：" + JSON.toJSONString(reqDTO.getRepoIds()) + "。\n"
+                + "10. level 使用：" + (reqDTO.getLevel() == null ? 1 : reqDTO.getLevel()) + "。\n"
+                + "11. 必须生成整体解析：每道题的 analysis 字段不能为空。\n"
+                + "12. 客观题 answerList 中每个选项的 analysis 不能为空。\n"
+                + "13. 主观题 answerList 中的 analysis 可为参考答案说明。\n"
+                + "14. 含程序代码的题目（5/6/7/8/9），content 与 answerList.content 必须保留换行和缩进，"
+                + "JSON 中用 \\n 表示换行，禁止把代码压成一行。\n"
+                + "15. 不要编造题目，无法识别的题目不要输出。\n\n"
                 + "原始文本：\n"
                 + reqDTO.getText();
     }
@@ -591,9 +609,28 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 qu.setRepoIds(reqDTO.getRepoIds());
             }
 
+            normalizeFormattedFields(qu);
             checkQuestion(qu, index);
             index++;
         }
+    }
+
+    private void normalizeFormattedFields(QuDetailDTO qu) {
+        qu.setContent(normalizeLineBreaks(qu.getContent()));
+        qu.setAnalysis(normalizeLineBreaks(qu.getAnalysis()));
+        if (!CollectionUtils.isEmpty(qu.getAnswerList())) {
+            for (QuAnswerDTO answer : qu.getAnswerList()) {
+                answer.setContent(normalizeLineBreaks(answer.getContent()));
+                answer.setAnalysis(normalizeLineBreaks(answer.getAnalysis()));
+            }
+        }
+    }
+
+    private String normalizeLineBreaks(String text) {
+        if (StringUtils.isBlank(text)) {
+            return text;
+        }
+        return text.replace("\\n", "\n");
     }
 
     private void checkQuestion(QuDetailDTO qu, int index) {
@@ -601,12 +638,22 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             throw new ServiceException("第" + index + "题题干为空");
         }
 
-        if (!QuType.RADIO.equals(qu.getQuType())
-                && !QuType.MULTI.equals(qu.getQuType())
-                && !QuType.JUDGE.equals(qu.getQuType())) {
+        if (qu.getQuType() == null) {
+            throw new ServiceException("第" + index + "题题型为空");
+        }
+
+        if (!QuType.isObjective(qu.getQuType()) && !QuType.isSubjective(qu.getQuType())) {
             throw new ServiceException("第" + index + "题题型错误");
         }
 
+        if (QuType.isObjective(qu.getQuType())) {
+            checkObjectiveQuestion(qu, index);
+        } else {
+            checkSubjectiveQuestion(qu, index);
+        }
+    }
+
+    private void checkObjectiveQuestion(QuDetailDTO qu, int index) {
         if (CollectionUtils.isEmpty(qu.getAnswerList())) {
             throw new ServiceException("第" + index + "题选项为空");
         }
@@ -644,7 +691,42 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         }
     }
 
+    private void checkSubjectiveQuestion(QuDetailDTO qu, int index) {
+        if (QuType.isFillType(qu.getQuType()) && CollectionUtils.isEmpty(qu.getAnswerList())) {
+            throw new ServiceException("第" + index + "题缺少参考答案");
+        }
+
+        if (CollectionUtils.isEmpty(qu.getAnswerList())) {
+            return;
+        }
+
+        for (QuAnswerDTO answer : qu.getAnswerList()) {
+            answer.setId("");
+            answer.setQuId(null);
+
+            if (StringUtils.isBlank(answer.getImage())) {
+                answer.setImage("");
+            }
+            if (StringUtils.isBlank(answer.getAnalysis())) {
+                answer.setAnalysis(buildAnswerAnalysis(qu, answer));
+            }
+            if (StringUtils.isBlank(answer.getContent())) {
+                throw new ServiceException("第" + index + "题存在空的参考答案/评分要点");
+            }
+            if (answer.getIsRight() == null) {
+                answer.setIsRight(Boolean.TRUE);
+            }
+        }
+    }
+
     private String buildQuestionAnalysis(QuDetailDTO qu) {
+        if (QuType.isSubjective(qu.getQuType())) {
+            String rightAnswers = buildRightAnswerText(qu);
+            if (StringUtils.isBlank(rightAnswers)) {
+                return "本题为主观题，请结合题干与参考答案进行作答。";
+            }
+            return "本题为主观题，参考答案/评分要点：" + rightAnswers + "。";
+        }
         String rightAnswers = buildRightAnswerText(qu);
         if (StringUtils.isBlank(rightAnswers)) {
             return "本题考查相关知识点，请结合题干和选项判断。";
@@ -653,6 +735,9 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     }
 
     private String buildAnswerAnalysis(QuDetailDTO qu, QuAnswerDTO answer) {
+        if (QuType.isSubjective(qu.getQuType())) {
+            return "参考答案/评分要点。";
+        }
         if (answer.getIsRight() != null && answer.getIsRight()) {
             return "该选项为正确答案，符合题干要求。";
         }
