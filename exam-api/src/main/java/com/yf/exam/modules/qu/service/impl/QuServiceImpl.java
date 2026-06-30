@@ -306,6 +306,71 @@ public class QuServiceImpl extends ServiceImpl<QuMapper, Qu> implements QuServic
                 }
                 a.setIsRight(Boolean.TRUE);
             }
+            if (QuType.FILL_PROGRAM.equals(qu.getQuType()) && !containsCodeBlock(qu.getContent())) {
+                throw new ServiceException(1, no + "程序填空题 content 应包含程序代码骨架！");
+            }
+            return;
+        }
+
+        if (QuType.READ_PROGRAM.equals(qu.getQuType())) {
+            if (!containsCodeBlock(qu.getContent())) {
+                throw new ServiceException(1, no + "阅读程序题 content 应包含完整程序！");
+            }
+            if (CollectionUtils.isEmpty(answers)) {
+                throw new ServiceException(1, no + "阅读程序题至少要包含一个运行结果/参考答案！");
+            }
+            for (QuAnswerDTO a : answers) {
+                if (StringUtils.isEmpty(a.getContent())) {
+                    throw new ServiceException(1, no + "运行结果/参考答案内容不能为空！");
+                }
+                a.setIsRight(Boolean.TRUE);
+            }
+            return;
+        }
+
+        if (QuType.PROGRAM.equals(qu.getQuType())) {
+            if (containsCodeBlock(qu.getContent())) {
+                throw new ServiceException(1, no + "编程题 content 应只存题干，程序代码请放在参考答案中！");
+            }
+            if (CollectionUtils.isEmpty(answers)) {
+                throw new ServiceException(1, no + "编程题至少要包含参考程序代码！");
+            }
+            boolean hasCode = false;
+            for (QuAnswerDTO a : answers) {
+                if (!StringUtils.isEmpty(a.getContent()) && containsCodeBlock(a.getContent())) {
+                    hasCode = true;
+                }
+                if (StringUtils.isEmpty(a.getContent())) {
+                    throw new ServiceException(1, no + "参考程序代码不能为空！");
+                }
+                a.setIsRight(Boolean.TRUE);
+            }
+            if (!hasCode) {
+                throw new ServiceException(1, no + "编程题参考答案必须是程序代码！");
+            }
+            return;
+        }
+
+        if (QuType.FIX_PROGRAM.equals(qu.getQuType())) {
+            if (!containsCodeBlock(qu.getContent())) {
+                throw new ServiceException(1, no + "程序改错题 content 应包含有错程序！");
+            }
+            if (CollectionUtils.isEmpty(answers)) {
+                throw new ServiceException(1, no + "程序改错题至少要包含改正后程序！");
+            }
+            boolean hasFixedCode = false;
+            for (QuAnswerDTO a : answers) {
+                if (StringUtils.isEmpty(a.getContent())) {
+                    throw new ServiceException(1, no + "改正后程序内容不能为空！");
+                }
+                if (containsCodeBlock(a.getContent())) {
+                    hasFixedCode = true;
+                }
+                a.setIsRight(Boolean.TRUE);
+            }
+            if (!hasFixedCode) {
+                throw new ServiceException(1, no + "程序改错题参考答案必须是改正后的程序代码！");
+            }
             return;
         }
 
@@ -319,5 +384,12 @@ public class QuServiceImpl extends ServiceImpl<QuMapper, Qu> implements QuServic
                 }
             }
         }
+    }
+
+    private boolean containsCodeBlock(String text) {
+        if (StringUtils.isEmpty(text)) {
+            return false;
+        }
+        return text.matches("(?s).*(#include|#define|void\\s+main|int\\s+main|int\\s+\\w+\\s*\\(|public\\s+class|def\\s+\\w+\\(|function\\s+\\w+\\().*");
     }
 }

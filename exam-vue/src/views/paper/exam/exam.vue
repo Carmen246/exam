@@ -63,10 +63,20 @@
 
         <el-card class="qu-content content-h">
           <div v-if="quData.content" class="qu-title-line">{{ quData.sort + 1 }}.</div>
+          <template v-if="isStemCodeQuType(quData.quType)">
+            <div class="section-title">题干</div>
+            <formatted-text :text="stemCodeParts.stem" class="qu-stem" />
+            <div v-if="stemCodeParts.code" class="section-title">{{ stemCodeSectionLabel(quData.quType) }}</div>
+            <formatted-text v-if="stemCodeParts.code" :text="stemCodeParts.code" :code="true" class="qu-stem" />
+          </template>
+          <template v-else-if="isProgramQuType(quData.quType)">
+            <div class="section-title">题干</div>
+            <formatted-text :text="quData.content" class="qu-stem" />
+          </template>
           <formatted-text
-            v-if="quData.content"
+            v-else-if="quData.content"
             :text="quData.content"
-            :code="needsCodeFormat(quData.quType, quData.content)"
+            :code="needsCodeFormatForStem(quData.quType, quData.content)"
             class="qu-stem"
           />
           <p v-if="quData.image!=null && quData.image!=''">
@@ -98,10 +108,14 @@
             <el-input
               v-model="subjValue"
               type="textarea"
-              :rows="quData.quType >= 6 ? 12 : 4"
-              placeholder="请输入你的答案"
+              :rows="isFillProgramQuType(quData.quType) ? 6 : (quData.quType >= 6 ? 12 : 4)"
+              :placeholder="subjectiveAnswerPlaceholder"
             />
-            <p v-if="paperData.hasSaq" class="subj-tip">本题为人工批阅题，提交后需等待阅卷</p>
+            <p v-if="isFillProgramQuType(quData.quType)" class="subj-tip">请按空位顺序填写答案，每行一空；提交后需人工批阅</p>
+            <p v-else-if="isReadProgramQuType(quData.quType)" class="subj-tip">请写出程序运行结果；提交后需人工批阅</p>
+            <p v-else-if="isProgramQuType(quData.quType)" class="subj-tip">请编写完整程序代码；提交后需人工批阅</p>
+            <p v-else-if="isFixProgramQuType(quData.quType)" class="subj-tip">请写出改正后的完整程序；提交后需人工批阅</p>
+            <p v-else-if="paperData.hasSaq" class="subj-tip">本题为人工批阅题，提交后需等待阅卷</p>
           </div>
 
           <div style="margin-top: 20px">
@@ -129,8 +143,8 @@ import { paperDetail, quDetail, handExam, fillAnswer } from '@/api/paper/exam'
 import { Loading } from 'element-ui'
 import ExamTimer from '@/views/paper/exam/components/ExamTimer'
 import FormattedText from '@/components/FormattedText'
-import { isSubjectiveQuType } from '@/filters'
-import { needsCodeFormat } from '@/utils/quFormat'
+import { isSubjectiveQuType, isFillProgramQuType, isStemCodeQuType, isProgramQuType, isReadProgramQuType, isFixProgramQuType } from '@/filters'
+import { needsCodeFormatForStem, parseFillProgramContent, subjectiveAnswerPlaceholder as getSubjectiveAnswerPlaceholder, stemCodeSectionLabel } from '@/utils/quFormat'
 
 export default {
   name: 'ExamProcess',
@@ -177,6 +191,15 @@ export default {
     if (typeof id !== 'undefined') {
       this.paperId = id
       this.fetchData(id)
+    }
+  },
+
+  computed: {
+    stemCodeParts() {
+      return parseFillProgramContent(this.quData.content)
+    },
+    subjectiveAnswerPlaceholder() {
+      return getSubjectiveAnswerPlaceholder(this.quData.quType)
     }
   },
 
@@ -294,7 +317,13 @@ export default {
     },
 
     isSubjectiveQuType,
-    needsCodeFormat,
+    isFillProgramQuType,
+    isStemCodeQuType,
+    isProgramQuType,
+    isReadProgramQuType,
+    isFixProgramQuType,
+    needsCodeFormatForStem,
+    stemCodeSectionLabel,
 
     // 保存答案
     handSave(item, callback) {
@@ -516,6 +545,12 @@ export default {
   .qu-title-line {
     font-weight: 600;
     margin-bottom: 4px;
+  }
+
+  .section-title {
+    margin: 10px 0 6px;
+    font-weight: 600;
+    color: #303133;
   }
 
 </style>

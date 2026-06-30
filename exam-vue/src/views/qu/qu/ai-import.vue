@@ -193,9 +193,29 @@
                       <el-tag size="mini" :type="quTypeTag(item.quType)">{{ quTypeLabel(item.quType) }}</el-tag>
                       <span class="question-index">{{ index + 1 }}.</span>
                     </div>
+                    <div v-if="isSubjectiveQuType(item.quType) && !isStemCodeQuType(item.quType)" class="answer-section-title">题干</div>
+                    <template v-if="isStemCodeQuType(item.quType)">
+                      <div class="answer-section-title">题干</div>
+                      <formatted-text
+                        :text="parseStemCodeContent(item.content).stem"
+                        class="question-content"
+                      />
+                      <div v-if="parseStemCodeContent(item.content).code" class="fill-program-code-block">
+                        <div class="answer-section-title">{{ stemCodeSectionLabel(item.quType) }}</div>
+                        <formatted-text
+                          :text="parseStemCodeContent(item.content).code"
+                          :code="true"
+                        />
+                      </div>
+                    </template>
+                    <template v-else-if="isProgramQuType(item.quType)">
+                      <div class="answer-section-title">题干</div>
+                      <formatted-text :text="item.content" class="question-content" />
+                    </template>
                     <formatted-text
+                      v-else
                       :text="item.content"
-                      :code="needsCodeFormat(item.quType, item.content)"
+                      :code="needsCodeFormatForStem(item.quType, item.content)"
                       class="question-content"
                     />
                   </div>
@@ -219,7 +239,19 @@
                   </div>
                 </div>
 
-                <div v-else-if="isFillQuType(item.quType) && item.answerList && item.answerList.length" class="answer-list">
+                <div v-else-if="isFillProgramQuType(item.quType) && item.answerList && item.answerList.length" class="answer-list">
+                  <div class="answer-section-title">各空参考答案</div>
+                  <div
+                    v-for="(answer, answerIndex) in item.answerList"
+                    :key="answerIndex"
+                    class="answer-item reference-item"
+                  >
+                    <span class="answer-prefix">{{ fillProgramBlankLabel(answerIndex) }}：</span>
+                    <formatted-text :text="answer.content" class="answer-content" />
+                  </div>
+                </div>
+
+                <div v-else-if="isNormalFillQuType(item.quType) && item.answerList && item.answerList.length" class="answer-list">
                   <div class="answer-section-title">参考答案</div>
                   <div
                     v-for="(answer, answerIndex) in item.answerList"
@@ -232,7 +264,7 @@
                 </div>
 
                 <div v-else-if="item.answerList && item.answerList.length" class="reference-block">
-                  <div class="answer-section-title">参考答案/评分要点</div>
+                  <div class="answer-section-title">{{ subjectiveAnswerLabel(item.quType) }}</div>
                   <div
                     v-for="(answer, answerIndex) in item.answerList"
                     :key="answerIndex"
@@ -240,7 +272,7 @@
                   >
                     <formatted-text
                       :text="answer.content"
-                      :code="needsCodeFormat(item.quType, answer.content)"
+                      :code="needsCodeFormatForAnswer(item.quType, answer.content)"
                     />
                   </div>
                 </div>
@@ -311,8 +343,16 @@
 import RepoSelect from '@/components/RepoSelect'
 import FormattedText from '@/components/FormattedText'
 import { createImportTask, getImportTaskStatus, retryImportTask, confirmQuestionImport, TASK_POLL_INTERVAL } from '@/api/qu/qu'
-import { quTypeFilter, isObjectiveQuType, isFillQuType, isSubjectiveQuType } from '@/filters'
-import { needsCodeFormat } from '@/utils/quFormat'
+import { quTypeFilter, isObjectiveQuType, isFillQuType, isFillProgramQuType, isNormalFillQuType, isSubjectiveQuType, isStemCodeQuType, isProgramQuType } from '@/filters'
+import {
+  needsCodeFormatForStem,
+  needsCodeFormatForAnswer,
+  subjectiveAnswerLabel,
+  parseFillProgramContent,
+  parseStemCodeContent,
+  fillProgramBlankLabel,
+  stemCodeSectionLabel
+} from '@/utils/quFormat'
 
 export default {
   name: 'AiImportQu',
@@ -764,8 +804,18 @@ export default {
 
     isObjectiveQuType,
     isFillQuType,
+    isFillProgramQuType,
+    isNormalFillQuType,
     isSubjectiveQuType,
-    needsCodeFormat,
+    isStemCodeQuType,
+    isProgramQuType,
+    needsCodeFormatForStem,
+    needsCodeFormatForAnswer,
+    subjectiveAnswerLabel,
+    parseFillProgramContent,
+    parseStemCodeContent,
+    fillProgramBlankLabel,
+    stemCodeSectionLabel,
 
     optionLabel(index) {
       return String.fromCharCode(65 + index)
@@ -846,6 +896,10 @@ export default {
 
 .failed-batch-panel {
   margin-top: 14px;
+}
+
+.fill-program-code-block {
+  margin-top: 10px;
 }
 
 .batch-preview-meta {

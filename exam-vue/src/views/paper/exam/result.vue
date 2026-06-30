@@ -24,7 +24,23 @@
 
       <div v-for="item in paperData.quList" :key="item.id" class="qu-content">
 
-        <p>{{ item.sort + 1 }}.{{ item.content }}（得分：{{ item.actualScore }}）</p>
+        <template v-if="isStemCodeQuType(item.quType)">
+          <p class="qu-title-line">{{ item.sort + 1 }}.（得分：{{ item.actualScore }}）</p>
+          <div class="section-title">题干</div>
+          <formatted-text :text="parseStemCodeContent(item.content).stem" />
+          <div v-if="parseStemCodeContent(item.content).code" class="section-title">{{ stemCodeSectionLabel(item.quType) }}</div>
+          <formatted-text
+            v-if="parseStemCodeContent(item.content).code"
+            :text="parseStemCodeContent(item.content).code"
+            :code="true"
+          />
+        </template>
+        <template v-else-if="isProgramQuType(item.quType)">
+          <p class="qu-title-line">{{ item.sort + 1 }}.（得分：{{ item.actualScore }}）</p>
+          <div class="section-title">题干</div>
+          <formatted-text :text="item.content" />
+        </template>
+        <p v-else>{{ item.sort + 1 }}.{{ item.content }}（得分：{{ item.actualScore }}）</p>
         <p v-if="item.image!=null && item.image!=''">
           <el-image :src="item.image" style="max-width:100%;" />
         </p>
@@ -65,7 +81,13 @@
           <el-row :gutter="24">
 
             <el-col :span="12">
-              我的回答：{{ item.answer || '未作答' }}
+              <template v-if="item.quType >= 6 && item.quType <= 8 && item.answer && looksLikeCode(item.answer)">
+                我的回答：
+                <formatted-text :text="item.answer" :code="true" />
+              </template>
+              <template v-else>
+                我的回答：{{ item.answer || '未作答' }}
+              </template>
             </el-col>
 
             <el-col :span="12" style="text-align: right; color: #909399;">
@@ -76,10 +98,14 @@
           </el-row>
 
           <div v-if="item.answerList && item.answerList.length" style="margin-top: 10px; color: #24da70">
-            参考答案：
+            {{ subjectiveAnswerLabel(item.quType) }}：
             <div v-for="(an, idx) in item.answerList" :key="idx" style="margin-top: 4px">
-              <span v-if="item.quType === 4 || item.quType === 5">{{ idx + 1 }}. </span>
-              {{ an.content }}
+              <span v-if="isFillProgramQuType(item.quType)">{{ fillProgramBlankLabel(idx) }}：</span>
+              <span v-else-if="item.quType === 4">{{ idx + 1 }}. </span>
+              <formatted-text
+                :text="an.content"
+                :code="needsCodeFormatForAnswer(item.quType, an.content)"
+              />
             </div>
           </div>
 
@@ -125,8 +151,19 @@
 <script>
 
 import { paperResult } from '@/api/paper/exam'
+import FormattedText from '@/components/FormattedText'
+import { isFillProgramQuType, isStemCodeQuType, isProgramQuType } from '@/filters'
+import {
+  parseStemCodeContent,
+  fillProgramBlankLabel,
+  subjectiveAnswerLabel,
+  needsCodeFormatForAnswer,
+  stemCodeSectionLabel,
+  looksLikeCode
+} from '@/utils/quFormat'
 
 export default {
+  components: { FormattedText },
   data() {
     return {
       // 试卷ID
@@ -150,6 +187,15 @@ export default {
     }
   },
   methods: {
+    isFillProgramQuType,
+    isStemCodeQuType,
+    isProgramQuType,
+    parseStemCodeContent,
+    fillProgramBlankLabel,
+    subjectiveAnswerLabel,
+    needsCodeFormatForAnswer,
+    stemCodeSectionLabel,
+    looksLikeCode,
 
     fetchData(id) {
       const params = { id: id }
@@ -235,6 +281,17 @@ export default {
   .card-line span {
     cursor: pointer;
     margin: 2px;
+  }
+
+  .qu-title-line {
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .section-title {
+    margin: 10px 0 6px;
+    font-weight: 600;
+    color: #303133;
   }
 
 </style>

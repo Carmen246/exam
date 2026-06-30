@@ -17,10 +17,7 @@ export default {
   },
   computed: {
     displayText() {
-      if (!this.text) {
-        return ''
-      }
-      return String(this.text).replace(/\\n/g, '\n')
+      return this.text || ''
     },
     textClass() {
       return this.code ? 'formatted-text formatted-text--code' : 'formatted-text'

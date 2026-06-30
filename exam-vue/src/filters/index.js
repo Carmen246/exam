@@ -57,6 +57,30 @@ export function isFillQuType(type) {
   return type === 4 || type === 5
 }
 
+export function isFillProgramQuType(type) {
+  return type === 5
+}
+
+export function isReadProgramQuType(type) {
+  return type === 6
+}
+
+export function isProgramQuType(type) {
+  return type === 7
+}
+
+export function isFixProgramQuType(type) {
+  return type === 8
+}
+
+export function isStemCodeQuType(type) {
+  return type === 5 || type === 6 || type === 8
+}
+
+export function isNormalFillQuType(type) {
+  return type === 4
+}
+
 export function isSubjectiveQuType(type) {
   return type >= 4 && type <= 9
 }

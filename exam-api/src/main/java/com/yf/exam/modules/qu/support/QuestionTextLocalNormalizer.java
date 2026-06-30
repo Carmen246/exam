@@ -77,13 +77,32 @@ public class QuestionTextLocalNormalizer {
         }
 
         String value = line.trim();
-        value = value.replaceAll("[ ]+", " ");
+        if (!containsFillMarker(value) && !looksLikeCodeLine(value)) {
+            value = value.replaceAll("[ ]+", " ");
+        }
         value = value.replaceAll("([\\u4e00-\\u9fa5])\\s+([\\u4e00-\\u9fa5])", "$1$2");
         value = value.replaceAll("^(\\d+)\\s*[\\.、)\\）]\\s*", "$1. ");
         value = value.replaceAll("^([A-Ha-h])\\s*[\\.、)\\）]\\s*", "$1. ");
         value = value.replaceAll("^(答案|参考答案)\\s*[:：]?\\s*", "答案：");
         value = removeOptionTailIndex(value);
         return value.trim();
+    }
+
+    private boolean containsFillMarker(String line) {
+        return line != null && line.contains("{FILL:");
+    }
+
+    private boolean looksLikeCodeLine(String line) {
+        if (StringUtils.isBlank(line)) {
+            return false;
+        }
+        return line.contains("{FILL:")
+                || line.contains("#include")
+                || line.contains("#define")
+                || line.contains("{")
+                || line.contains("}")
+                || line.contains("____")
+                || line.matches(".*\\b(if|else|for|while|return|int|void|char|float|double|printf|scanf)\\b.*");
     }
 
     private String removeOptionTailIndex(String line) {

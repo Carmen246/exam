@@ -2,9 +2,9 @@ package com.yf.exam.modules.qu.service.impl;
 
 import com.yf.exam.core.exception.ServiceException;
 import com.yf.exam.modules.qu.service.QuestionDocumentParseService;
+import com.yf.exam.modules.qu.support.DocxBlankAwareTextExtractor;
+import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
 import com.yf.exam.modules.qu.support.QuestionTextLocalNormalizer;
-import dev.langchain4j.data.document.Document;
-import dev.langchain4j.data.document.parser.apache.poi.ApachePoiDocumentParser;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,10 +19,14 @@ import java.nio.file.Files;
 @Service
 public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseService {
 
-    private final ApachePoiDocumentParser documentParser = new ApachePoiDocumentParser();
-
     @Autowired
     private QuestionTextLocalNormalizer localNormalizer;
+
+    @Autowired
+    private DocxBlankAwareTextExtractor docxBlankAwareTextExtractor;
+
+    @Autowired
+    private FillProgramBlankProcessor fillProgramBlankProcessor;
 
     @Override
     public String parseText(MultipartFile file) {
@@ -52,7 +56,11 @@ public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseSe
 
     @Override
     public String normalizeLocally(String text) {
-        return localNormalizer.normalize(text);
+        if (StringUtils.isBlank(text)) {
+            return "";
+        }
+        String marked = fillProgramBlankProcessor.markSpacePaddedBlanks(text);
+        return localNormalizer.normalize(marked);
     }
 
     @Override
@@ -68,8 +76,7 @@ public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseSe
 
         try {
             if ("docx".equalsIgnoreCase(ext)) {
-                Document document = documentParser.parse(inputStreamSupplier.get());
-                return document.text();
+                return docxBlankAwareTextExtractor.extract(inputStreamSupplier.get());
             }
             if ("txt".equalsIgnoreCase(ext)) {
                 return new String(bytesSupplier.get(), StandardCharsets.UTF_8);

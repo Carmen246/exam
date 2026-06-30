@@ -46,4 +46,24 @@ public interface QuType {
     static boolean isFillType(Integer quType) {
         return FILL.equals(quType) || FILL_PROGRAM.equals(quType);
     }
+
+    static boolean isFillProgram(Integer quType) {
+        return FILL_PROGRAM.equals(quType);
+    }
+
+    static boolean isReadProgram(Integer quType) {
+        return READ_PROGRAM.equals(quType);
+    }
+
+    static boolean isProgram(Integer quType) {
+        return PROGRAM.equals(quType);
+    }
+
+    static boolean isFixProgram(Integer quType) {
+        return FIX_PROGRAM.equals(quType);
+    }
+
+    static boolean isStemCodeType(Integer quType) {
+        return isFillProgram(quType) || isReadProgram(quType) || isFixProgram(quType);
+    }
 }

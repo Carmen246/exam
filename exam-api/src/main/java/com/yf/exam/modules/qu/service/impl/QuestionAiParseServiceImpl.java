@@ -25,6 +25,7 @@ import org.springframework.util.CollectionUtils;
 import com.yf.exam.modules.qu.dto.QuestionImportReqDTO;
 import com.yf.exam.modules.qu.dto.QuestionImportRespDTO;
 import com.yf.exam.modules.qu.service.QuService;
+import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
 import com.yf.exam.modules.repo.service.RepoService;
 import org.springframework.transaction.annotation.Transactional;
 import com.yf.exam.modules.qu.dto.QuestionNormalizeTextReqDTO;
@@ -52,6 +53,11 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     private static final int AI_RETRY_TIMES = 2;
     private static final Pattern QUESTION_START_PATTERN = Pattern.compile("(?m)(?=^\\s*\\d+[\\.．、]\\s*)");
 
+    private static final Pattern CODE_START_PATTERN = Pattern.compile(
+            "(?m)^\\s*(#include\\s|#import\\s|#define\\s|using\\s+\\w|void\\s+main|int\\s+main|"
+                    + "public\\s+class|class\\s+\\w+|def\\s+\\w|function\\s+\\w|package\\s+\\w|"
+                    + "(?:int|char|void|float|double|long|short|unsigned)\\s+\\w+\\s*\\()");
+
     private static final String SYSTEM_PROMPT =
             "你是在线考试系统的试题解析器。你只能返回合法 json，不要返回 Markdown，不要解释，不要使用代码块。"
                     + "题型编码固定为：1=单选题，2=多选题，3=判断题，4=填空题，5=程序填空题，"
@@ -59,16 +65,24 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     + "只能按原题型解析，不要把填空题/编程题改造成选择题。"
                     + "如果题目有 A/B/C/D 选项，解析为单选或多选。"
                     + "如果题目要求判断正误，解析为判断题。"
-                    + "如果题目含“请填空”“程序填空”，解析为填空题(4)或程序填空题(5)。"
-                    + "如果题目要求“阅读程序写结果”，解析为阅读程序写结果题(6)。"
-                    + "如果题目要求“编写程序”，解析为编程题(7)。"
-                    + "如果题目要求“改错”，解析为程序改错题(8)。"
+                    + "如果题目含“请填空”且无大段程序骨架，解析为填空题(4)。"
+                    + "如果题目含函数/程序代码骨架且代码内部有空位，优先解析为程序填空题(5)，"
+                    + "即使题干未写“请填空”；不要把程序填空题改造成选择题、普通填空题或编程题。"
+                    + "如果题目要求“阅读程序写结果”或给出完整程序要求写输出，解析为阅读程序写结果题(6)；"
+                    + "content=题干+完整程序(无空位)，answerList=运行结果，不要把程序放进 answerList。"
+                    + "如果题目要求“编写程序”且只给需求无现成代码骨架，解析为编程题(7)；"
+                    + "content=仅题干，answerList[0]=完整参考程序，禁止把程序写进 content。"
+                    + "如果题目要求“改错/改正/找出错误”，解析为程序改错题(8)；"
+                    + "content=题干+有错程序，answerList=改正后程序。"
                     + "如果题目属于综合应用，解析为综合应用题(9)。"
-                    + "主观题(4-9)的 answerList 存参考答案或评分要点，isRight=true；"
-                    + "阅读/编程/改错/综合题允许 answerList 为空。"
-                    + "含程序代码的题目（5/6/7/8/9），content 和 answerList.content 必须保留原始换行与缩进，"
-                    + "JSON 字符串中用 \\n 表示换行，不要把多行代码合并成一行；"
-                    + "编程题 content 建议：题干描述后空一行，再逐行输出代码。"
+                    + "主观题(4-9)的 answerList 存参考答案或评分要点，isRight=true。"
+                    + "普通填空题(4)：无大段代码骨架，content=题干，answerList=各空文字答案。"
+                    + "程序填空题(5)：content=题干说明+程序代码全文(代码中空位必须用____表示，禁止把答案写进代码)，"
+                    + "answerList=每个空的参考答案(按出现顺序)，不要把完整程序放进 answerList。"
+                    + "阅读程序写结果题(6)：content=题干+完整程序(无空位)，answerList=运行结果。"
+                    + "编程题(7)：content=仅题干，answerList[0]=完整参考程序，禁止把程序写进 content。"
+                    + "程序改错题(8)：content=题干+有错程序，answerList=改正后程序；关键词“改错/改正/错误”。"
+                    + "程序代码必须保留换行与缩进，JSON 中用 \\n 表示换行。"
                     + "返回格式必须是："
                     + "{\"questions\":[{\"quType\":1,\"level\":1,\"content\":\"题干\","
                     + "\"analysis\":\"整体解析，说明本题考查点和正确答案依据，不能为空\",\"image\":\"\",\"remark\":\"\","
@@ -95,6 +109,9 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     @Autowired
     @Qualifier("asyncExecutor")
     private ThreadPoolTaskExecutor asyncExecutor;
+
+    @Autowired
+    private FillProgramBlankProcessor fillProgramBlankProcessor;
 
     private volatile ChatLanguageModel chatModel;
 
@@ -542,18 +559,38 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 + "2. 单选题 quType=1，只能有一个正确答案。\n"
                 + "3. 多选题 quType=2，至少有一个正确答案。\n"
                 + "4. 判断题 quType=3，选项固定为：正确、错误。\n"
-                + "5. 填空题 quType=4，程序填空题 quType=5，answerList 存参考答案，可多个，isRight=true。\n"
-                + "6. 阅读程序写结果题 quType=6，编程题 quType=7，程序改错题 quType=8，综合应用题 quType=9。\n"
-                + "7. 题型 6-9 允许 answerList 为空，但建议提供参考答案或评分要点。\n"
-                + "8. 每道题必须包含 content、quType。\n"
-                + "9. repoIds 使用：" + JSON.toJSONString(reqDTO.getRepoIds()) + "。\n"
-                + "10. level 使用：" + (reqDTO.getLevel() == null ? 1 : reqDTO.getLevel()) + "。\n"
-                + "11. 必须生成整体解析：每道题的 analysis 字段不能为空。\n"
-                + "12. 客观题 answerList 中每个选项的 analysis 不能为空。\n"
-                + "13. 主观题 answerList 中的 analysis 可为参考答案说明。\n"
-                + "14. 含程序代码的题目（5/6/7/8/9），content 与 answerList.content 必须保留换行和缩进，"
-                + "JSON 中用 \\n 表示换行，禁止把代码压成一行。\n"
-                + "15. 不要编造题目，无法识别的题目不要输出。\n\n"
+                + "5. 普通填空题 quType=4：无大段程序骨架，content=题干，answerList=各空答案。\n"
+                + "6. 程序填空题 quType=5（重点）：\n"
+                + "   - 识别特征：题干说明函数/程序功能 + C 代码骨架，代码内部有空位(多空格、下划线、{FILL:答案}、____)。\n"
+                + "   - 必须识别代码中全部空位，answerList 数量必须等于代码中 ____ 数量，不允许只输出一个空。\n"
+                + "   - content=题干文字 + \\n\\n + 程序代码；代码中的每个空位必须替换为 ____，禁止保留答案表达式。\n"
+                + "   - 例如 if( ____ ) 而不是 if( max<a[row][col] )；answerList 按顺序存各空答案。\n"
+                + "   - 源文档若出现 {FILL:max<a[row][col]} 表示该处是第1空；多个 {FILL:...} 按顺序对应第1空、第2空...\n"
+                + "   - 若原文第二空为 min<max 但按题意应为 min>max，answerList 可写 min>max，并在 analysis 说明原文可能为 min<max。\n"
+                + "   - answerList 只存各空应填片段，不要把完整程序放进 answerList。\n"
+                + "   - 与 quType=6(完整程序无空位)、quType=7(只给需求无骨架)、quType=8(改错)区分。\n"
+                + "7. 阅读程序写结果题 quType=6（重点）：\n"
+                + "   - 识别特征：给出完整程序(无空位)，要求写出运行结果/输出/程序功能分析。\n"
+                + "   - 关键词：阅读程序、写出结果、程序运行后、输出结果。\n"
+                + "   - content=题干 + \\n\\n + 完整程序代码；answerList=运行结果或参考答案(非程序代码)。\n"
+                + "   - 不要把完整程序放进 answerList；与 quType=5(有空位)、quType=8(改错)区分。\n"
+                + "8. 编程题 quType=7（重点）：\n"
+                + "   - 识别特征：只给题目需求/功能描述，要求学生编写完整程序，无现成代码骨架。\n"
+                + "   - 关键词：编写程序、写程序、编程实现。\n"
+                + "   - content=仅题干文字，禁止把程序写进 content；answerList[0]=完整参考程序。\n"
+                + "9. 程序改错题 quType=8（重点）：\n"
+                + "   - 识别特征：给出有错程序，要求找出错误并改正。\n"
+                + "   - 关键词：改错、改正、错误、请修改。\n"
+                + "   - content=题干 + \\n\\n + 有错程序代码；answerList=改正后完整程序。\n"
+                + "   - 不要把改正后程序写进 content；与 quType=5(填空)、quType=6(阅读)区分。\n"
+                + "10. 综合应用题 quType=9：content=题干，answerList=参考答案。\n"
+                + "11. 每道题必须包含 content、quType。\n"
+                + "12. repoIds 使用：" + JSON.toJSONString(reqDTO.getRepoIds()) + "。\n"
+                + "13. level 使用：" + (reqDTO.getLevel() == null ? 1 : reqDTO.getLevel()) + "。\n"
+                + "14. 必须生成整体解析：每道题的 analysis 不能为空。\n"
+                + "15. 客观题 answerList 中每个选项的 analysis 不能为空。\n"
+                + "16. 程序代码保留换行，JSON 中用 \\n 表示换行。\n"
+                + "17. 不要编造题目，无法识别的题目不要输出。\n\n"
                 + "原始文本：\n"
                 + reqDTO.getText();
     }
@@ -609,28 +646,440 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 qu.setRepoIds(reqDTO.getRepoIds());
             }
 
-            normalizeFormattedFields(qu);
+            normalizeFillProgramQuestion(qu);
+            normalizeReadProgramQuestion(qu);
+            normalizeFixProgramQuestion(qu);
+            splitStemAndReference(qu);
+            sanitizeVisibleFillMarkers(qu);
             checkQuestion(qu, index);
             index++;
         }
     }
 
-    private void normalizeFormattedFields(QuDetailDTO qu) {
-        qu.setContent(normalizeLineBreaks(qu.getContent()));
-        qu.setAnalysis(normalizeLineBreaks(qu.getAnalysis()));
+    /**
+     * 程序填空题：content 存题干+代码骨架，answerList 只存各空参考答案
+     */
+    private void normalizeFillProgramQuestion(QuDetailDTO qu) {
+        if (!QuType.FILL_PROGRAM.equals(qu.getQuType())) {
+            return;
+        }
+
+        String content = StringUtils.defaultString(qu.getContent()).trim();
+        List<String> aiAnswers = collectAiBlankAnswers(qu.getAnswerList());
+        String programFromAnswer = null;
+
         if (!CollectionUtils.isEmpty(qu.getAnswerList())) {
             for (QuAnswerDTO answer : qu.getAnswerList()) {
-                answer.setContent(normalizeLineBreaks(answer.getContent()));
-                answer.setAnalysis(normalizeLineBreaks(answer.getAnalysis()));
+                if (answer == null || StringUtils.isBlank(answer.getContent())) {
+                    continue;
+                }
+                String answerText = answer.getContent().trim();
+                if (looksLikeProgramSkeleton(answerText)) {
+                    if (programFromAnswer == null) {
+                        programFromAnswer = answerText;
+                    }
+                }
+            }
+        }
+
+        if (programFromAnswer != null && !containsCodeBlock(content)) {
+            content = StringUtils.isBlank(content)
+                    ? programFromAnswer
+                    : content + "\n\n" + programFromAnswer;
+        }
+
+        int codeStart = findCodeBlockStart(content);
+        String stem = content;
+        String code = "";
+        if (codeStart > 0) {
+            stem = content.substring(0, codeStart).trim();
+            code = content.substring(codeStart).trim();
+        } else if (containsCodeBlock(content)) {
+            code = content;
+            stem = "";
+        }
+
+        FillProgramBlankProcessor.ProcessResult processed = fillProgramBlankProcessor.process(code, aiAnswers);
+        code = processed.getCode();
+
+        if (StringUtils.isNotBlank(stem) && StringUtils.isNotBlank(code)) {
+            content = stem + "\n\n" + code;
+        } else if (StringUtils.isNotBlank(code)) {
+            content = code;
+        } else {
+            content = stem;
+        }
+
+        List<QuAnswerDTO> blankAnswers = buildBlankAnswerList(processed.getBlanks());
+        appendBlankNotesToAnalysis(qu, processed.getBlanks());
+
+        qu.setContent(content);
+        qu.setAnswerList(blankAnswers);
+    }
+
+    private List<String> collectAiBlankAnswers(List<QuAnswerDTO> answers) {
+        List<String> result = new ArrayList<>();
+        if (CollectionUtils.isEmpty(answers)) {
+            return result;
+        }
+        for (QuAnswerDTO answer : answers) {
+            if (answer == null || StringUtils.isBlank(answer.getContent())) {
+                continue;
+            }
+            String text = answer.getContent().trim();
+            if (looksLikeProgramSkeleton(text)) {
+                continue;
+            }
+            result.add(text);
+        }
+        return result;
+    }
+
+    private List<QuAnswerDTO> buildBlankAnswerList(List<FillProgramBlankProcessor.BlankSlot> blanks) {
+        List<QuAnswerDTO> result = new ArrayList<>();
+        if (blanks == null) {
+            return result;
+        }
+        for (FillProgramBlankProcessor.BlankSlot slot : blanks) {
+            if (slot == null || StringUtils.isBlank(slot.getContent())) {
+                continue;
+            }
+            QuAnswerDTO answer = new QuAnswerDTO();
+            answer.setContent(slot.getContent());
+            answer.setIsRight(true);
+            answer.setImage("");
+            if (StringUtils.isNotBlank(slot.getNote())) {
+                answer.setAnalysis(slot.getNote());
+            }
+            result.add(answer);
+        }
+        return result;
+    }
+
+    private void appendBlankNotesToAnalysis(QuDetailDTO qu, List<FillProgramBlankProcessor.BlankSlot> blanks) {
+        if (blanks == null || blanks.isEmpty()) {
+            return;
+        }
+        StringBuilder notes = new StringBuilder();
+        int index = 1;
+        for (FillProgramBlankProcessor.BlankSlot slot : blanks) {
+            if (slot != null && StringUtils.isNotBlank(slot.getNote())) {
+                if (notes.length() > 0) {
+                    notes.append(" ");
+                }
+                notes.append("第").append(index).append("空：").append(slot.getNote()).append("。");
+            }
+            index++;
+        }
+        if (notes.length() == 0) {
+            return;
+        }
+        String analysis = StringUtils.defaultString(qu.getAnalysis()).trim();
+        if (StringUtils.isBlank(analysis)) {
+            qu.setAnalysis(notes.toString());
+        } else if (!analysis.contains(notes.toString())) {
+            qu.setAnalysis(analysis + " " + notes);
+        }
+    }
+
+    /**
+     * 阅读程序题：content 存题干+完整程序，answerList 只存运行结果
+     */
+    private void normalizeReadProgramQuestion(QuDetailDTO qu) {
+        if (!QuType.READ_PROGRAM.equals(qu.getQuType())) {
+            return;
+        }
+
+        String content = StringUtils.defaultString(qu.getContent()).trim();
+        List<QuAnswerDTO> resultAnswers = new ArrayList<>();
+        String programFromAnswer = null;
+
+        if (!CollectionUtils.isEmpty(qu.getAnswerList())) {
+            for (QuAnswerDTO answer : qu.getAnswerList()) {
+                if (answer == null || StringUtils.isBlank(answer.getContent())) {
+                    continue;
+                }
+                String answerText = answer.getContent().trim();
+                if (looksLikeProgramSkeleton(answerText)) {
+                    if (programFromAnswer == null) {
+                        programFromAnswer = answerText;
+                    }
+                } else {
+                    answer.setIsRight(true);
+                    resultAnswers.add(answer);
+                }
+            }
+        }
+
+        if (programFromAnswer != null && !containsCodeBlock(content)) {
+            content = StringUtils.isBlank(content)
+                    ? programFromAnswer
+                    : content + "\n\n" + programFromAnswer;
+        }
+
+        int codeStart = findCodeBlockStart(content);
+        if (codeStart > 0) {
+            String stem = content.substring(0, codeStart).trim();
+            String code = content.substring(codeStart).trim();
+            if (StringUtils.isNotBlank(stem) && StringUtils.isNotBlank(code)) {
+                content = stem + "\n\n" + code;
+            }
+        }
+
+        qu.setContent(content);
+        qu.setAnswerList(resultAnswers);
+    }
+
+    /**
+     * 程序改错题：content 存题干+有错程序，answerList 存改正后程序
+     */
+    private void normalizeFixProgramQuestion(QuDetailDTO qu) {
+        if (!QuType.FIX_PROGRAM.equals(qu.getQuType())) {
+            return;
+        }
+
+        String content = StringUtils.defaultString(qu.getContent()).trim();
+
+        if (CollectionUtils.isEmpty(qu.getAnswerList())) {
+            splitReferenceFromContent(qu, "改正后程序代码。");
+            content = StringUtils.defaultString(qu.getContent()).trim();
+        }
+
+        List<QuAnswerDTO> fixedAnswers = new ArrayList<>();
+        String buggyFromAnswer = null;
+
+        if (!CollectionUtils.isEmpty(qu.getAnswerList())) {
+            for (QuAnswerDTO answer : qu.getAnswerList()) {
+                if (answer == null || StringUtils.isBlank(answer.getContent())) {
+                    continue;
+                }
+                String answerText = answer.getContent().trim();
+                if (containsCodeBlock(answerText)) {
+                    answer.setIsRight(true);
+                    fixedAnswers.add(answer);
+                } else if (buggyFromAnswer == null && looksLikeProgramSkeleton(answerText)) {
+                    buggyFromAnswer = answerText;
+                }
+            }
+        }
+
+        if (buggyFromAnswer != null && !containsCodeBlock(content)) {
+            content = StringUtils.isBlank(content)
+                    ? buggyFromAnswer
+                    : content + "\n\n" + buggyFromAnswer;
+        }
+
+        if (!fixedAnswers.isEmpty()) {
+            QuAnswerDTO fixed = fixedAnswers.get(0);
+            String fixedCode = fixed.getContent().trim();
+            if (content.endsWith(fixedCode)) {
+                content = content.substring(0, content.length() - fixedCode.length()).trim();
+            }
+        }
+
+        int codeStart = findCodeBlockStart(content);
+        if (codeStart > 0) {
+            String stem = content.substring(0, codeStart).trim();
+            String code = content.substring(codeStart).trim();
+            if (StringUtils.isNotBlank(stem) && StringUtils.isNotBlank(code)) {
+                content = stem + "\n\n" + code;
+            }
+        }
+
+        qu.setContent(content);
+        if (!fixedAnswers.isEmpty()) {
+            qu.setAnswerList(fixedAnswers);
+        }
+    }
+
+    private boolean isBlankFillAnswer(String text) {
+        if (StringUtils.isBlank(text)) {
+            return false;
+        }
+        if (text.contains("{") || text.contains("}")) {
+            return false;
+        }
+        if (text.split("\n").length > 2) {
+            return false;
+        }
+        return text.length() <= 120;
+    }
+
+    private boolean looksLikeProgramSkeleton(String text) {
+        if (StringUtils.isBlank(text)) {
+            return false;
+        }
+        return containsCodeBlock(text) && (text.contains("{") || text.contains("#include"));
+    }
+
+    /**
+     * 编程题等：若 AI 把题干和程序代码混在 content，自动拆分到 answerList
+     */
+    private void splitStemAndReference(QuDetailDTO qu) {
+        if (qu.getQuType() == null || StringUtils.isBlank(qu.getContent())) {
+            return;
+        }
+
+        if (QuType.FILL_PROGRAM.equals(qu.getQuType())) {
+            return;
+        }
+
+        if (QuType.READ_PROGRAM.equals(qu.getQuType())) {
+            return;
+        }
+
+        if (QuType.PROGRAM.equals(qu.getQuType())) {
+            splitProgramQuestion(qu);
+            return;
+        }
+
+        if (QuType.FIX_PROGRAM.equals(qu.getQuType()) && CollectionUtils.isEmpty(qu.getAnswerList())) {
+            splitReferenceFromContent(qu, "改正后程序代码。");
+            return;
+        }
+
+        if (QuType.FIX_PROGRAM.equals(qu.getQuType())) {
+            return;
+        }
+    }
+
+    private void splitProgramQuestion(QuDetailDTO qu) {
+        String content = qu.getContent().trim();
+
+        if (!CollectionUtils.isEmpty(qu.getAnswerList())) {
+            boolean hasCodeAnswer = false;
+            for (QuAnswerDTO answer : qu.getAnswerList()) {
+                if (answer != null && containsCodeBlock(answer.getContent())) {
+                    hasCodeAnswer = true;
+                    break;
+                }
+            }
+            if (hasCodeAnswer) {
+                qu.setContent(stripEmbeddedCode(content));
+                return;
+            }
+        }
+
+        int codeStart = findCodeBlockStart(content);
+        if (codeStart <= 0) {
+            return;
+        }
+
+        String stem = content.substring(0, codeStart).trim();
+        String code = content.substring(codeStart).trim();
+        if (StringUtils.isBlank(stem) || !containsCodeBlock(code)) {
+            return;
+        }
+
+        qu.setContent(stem);
+        if (CollectionUtils.isEmpty(qu.getAnswerList())) {
+            qu.setAnswerList(new ArrayList<>());
+        }
+        if (qu.getAnswerList().isEmpty()) {
+            QuAnswerDTO answer = new QuAnswerDTO();
+            answer.setContent(code);
+            answer.setIsRight(true);
+            answer.setImage("");
+            answer.setAnalysis("参考程序代码。");
+            qu.getAnswerList().add(answer);
+        } else {
+            QuAnswerDTO first = qu.getAnswerList().get(0);
+            if (StringUtils.isBlank(first.getContent()) || !containsCodeBlock(first.getContent())) {
+                first.setContent(code);
+                first.setIsRight(true);
             }
         }
     }
 
-    private String normalizeLineBreaks(String text) {
-        if (StringUtils.isBlank(text)) {
-            return text;
+    private void splitReferenceFromContent(QuDetailDTO qu, String analysis) {
+        String content = qu.getContent().trim();
+        int codeStart = findCodeBlockStart(content);
+        if (codeStart <= 0) {
+            return;
         }
-        return text.replace("\\n", "\n");
+
+        int secondCodeStart = findCodeBlockStart(content.substring(codeStart + 1));
+        if (secondCodeStart < 0) {
+            return;
+        }
+        secondCodeStart = codeStart + 1 + secondCodeStart;
+
+        String stemWithBuggyCode = content.substring(0, secondCodeStart).trim();
+        String fixedCode = content.substring(secondCodeStart).trim();
+        if (StringUtils.isBlank(fixedCode) || !containsCodeBlock(fixedCode)) {
+            return;
+        }
+
+        qu.setContent(stemWithBuggyCode);
+        QuAnswerDTO answer = new QuAnswerDTO();
+        answer.setContent(fixedCode);
+        answer.setIsRight(true);
+        answer.setImage("");
+        answer.setAnalysis(analysis);
+        qu.setAnswerList(new ArrayList<>());
+        qu.getAnswerList().add(answer);
+    }
+
+    private String stripEmbeddedCode(String content) {
+        int codeStart = findCodeBlockStart(content);
+        if (codeStart > 0) {
+            return content.substring(0, codeStart).trim();
+        }
+        return content;
+    }
+
+    private int findCodeBlockStart(String text) {
+        if (StringUtils.isBlank(text)) {
+            return -1;
+        }
+        java.util.regex.Matcher matcher = CODE_START_PATTERN.matcher(text);
+        if (matcher.find()) {
+            return matcher.start();
+        }
+        String[] markers = {"#include", "void main", "int main", "public class", "def ", "function "};
+        for (String marker : markers) {
+            int idx = indexOfAtLineStart(text, marker);
+            if (idx > 0) {
+                return idx;
+            }
+        }
+        return -1;
+    }
+
+    private int indexOfAtLineStart(String text, String marker) {
+        int searchFrom = 0;
+        while (searchFrom < text.length()) {
+            int idx = text.indexOf(marker, searchFrom);
+            if (idx < 0) {
+                return -1;
+            }
+            if (idx == 0 || text.charAt(idx - 1) == '\n') {
+                return idx;
+            }
+            searchFrom = idx + 1;
+        }
+        return -1;
+    }
+
+    private boolean containsCodeBlock(String text) {
+        return findCodeBlockStart(text) >= 0;
+    }
+
+    private int countBlankPlaceholders(String text) {
+        if (StringUtils.isBlank(text)) {
+            return 0;
+        }
+        int count = 0;
+        int from = 0;
+        while (true) {
+            int idx = text.indexOf(FillProgramBlankProcessor.BLANK, from);
+            if (idx < 0) {
+                break;
+            }
+            count++;
+            from = idx + FillProgramBlankProcessor.BLANK.length();
+        }
+        return count;
     }
 
     private void checkQuestion(QuDetailDTO qu, int index) {
@@ -692,8 +1141,74 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     }
 
     private void checkSubjectiveQuestion(QuDetailDTO qu, int index) {
-        if (QuType.isFillType(qu.getQuType()) && CollectionUtils.isEmpty(qu.getAnswerList())) {
+        if (QuType.FILL_PROGRAM.equals(qu.getQuType())) {
+            if (CollectionUtils.isEmpty(qu.getAnswerList())) {
+                throw new ServiceException("第" + index + "题程序填空题缺少各空参考答案");
+            }
+            if (!containsCodeBlock(qu.getContent())) {
+                throw new ServiceException("第" + index + "题程序填空题 content 应包含程序代码骨架");
+            }
+            int blankCount = countBlankPlaceholders(qu.getContent());
+            if (blankCount == 0) {
+                throw new ServiceException("第" + index + "题程序填空题代码中应使用 ____ 标记空位");
+            }
+            if (blankCount != qu.getAnswerList().size()) {
+                throw new ServiceException("第" + index + "题程序填空题空位数量(" + blankCount
+                        + ")与 answerList 数量(" + qu.getAnswerList().size() + ")不一致");
+            }
+            for (QuAnswerDTO answer : qu.getAnswerList()) {
+                if (answer != null && looksLikeProgramSkeleton(answer.getContent())) {
+                    throw new ServiceException("第" + index + "题程序填空题的 answerList 应只存各空答案，不应包含完整程序");
+                }
+            }
+        } else if (QuType.FILL.equals(qu.getQuType()) && CollectionUtils.isEmpty(qu.getAnswerList())) {
             throw new ServiceException("第" + index + "题缺少参考答案");
+        } else if (QuType.READ_PROGRAM.equals(qu.getQuType())) {
+            if (!containsCodeBlock(qu.getContent())) {
+                throw new ServiceException("第" + index + "题阅读程序题 content 应包含完整程序");
+            }
+            if (CollectionUtils.isEmpty(qu.getAnswerList())) {
+                throw new ServiceException("第" + index + "题阅读程序题缺少运行结果/参考答案");
+            }
+            for (QuAnswerDTO answer : qu.getAnswerList()) {
+                if (answer != null && looksLikeProgramSkeleton(answer.getContent())) {
+                    throw new ServiceException("第" + index + "题阅读程序题的 answerList 应存运行结果，不应包含完整程序");
+                }
+            }
+        } else if (QuType.FIX_PROGRAM.equals(qu.getQuType())) {
+            if (!containsCodeBlock(qu.getContent())) {
+                throw new ServiceException("第" + index + "题程序改错题 content 应包含有错程序");
+            }
+            if (CollectionUtils.isEmpty(qu.getAnswerList())) {
+                throw new ServiceException("第" + index + "题程序改错题缺少改正后程序");
+            }
+            boolean hasFixedCode = false;
+            for (QuAnswerDTO answer : qu.getAnswerList()) {
+                if (answer != null && containsCodeBlock(answer.getContent())) {
+                    hasFixedCode = true;
+                    break;
+                }
+            }
+            if (!hasFixedCode) {
+                throw new ServiceException("第" + index + "题程序改错题的参考答案必须是改正后的程序代码");
+            }
+        }
+
+        if (QuType.PROGRAM.equals(qu.getQuType())) {
+            if (CollectionUtils.isEmpty(qu.getAnswerList())) {
+                throw new ServiceException("第" + index + "题编程题缺少参考程序代码");
+            }
+            boolean hasCode = false;
+            for (QuAnswerDTO answer : qu.getAnswerList()) {
+                if (answer != null && containsCodeBlock(answer.getContent())) {
+                    hasCode = true;
+                    break;
+                }
+            }
+            if (!hasCode) {
+                throw new ServiceException("第" + index + "题编程题的参考答案必须是程序代码");
+            }
+            qu.setContent(stripEmbeddedCode(qu.getContent()));
         }
 
         if (CollectionUtils.isEmpty(qu.getAnswerList())) {
@@ -735,6 +1250,18 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     }
 
     private String buildAnswerAnalysis(QuDetailDTO qu, QuAnswerDTO answer) {
+        if (QuType.FILL_PROGRAM.equals(qu.getQuType())) {
+            return "该空位的参考答案。";
+        }
+        if (QuType.READ_PROGRAM.equals(qu.getQuType())) {
+            return "程序运行结果/参考答案。";
+        }
+        if (QuType.PROGRAM.equals(qu.getQuType())) {
+            return "参考程序代码。";
+        }
+        if (QuType.FIX_PROGRAM.equals(qu.getQuType())) {
+            return "改正后的程序代码。";
+        }
         if (QuType.isSubjective(qu.getQuType())) {
             return "参考答案/评分要点。";
         }
@@ -786,6 +1313,9 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
     private void prepareQuestionForInsert(QuDetailDTO qu, int index) {
 
+        normalizeFillProgramQuestion(qu);
+        splitStemAndReference(qu);
+        sanitizeVisibleFillMarkers(qu);
         checkQuestion(qu, index);
 
         if (CollectionUtils.isEmpty(qu.getRepoIds())) {
@@ -821,7 +1351,33 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             }
             if (StringUtils.isBlank(answer.getAnalysis())) {
                 answer.setAnalysis(buildAnswerAnalysis(qu, answer));
+            } else {
+                answer.setAnalysis(restoreFillMarkers(answer.getAnalysis()));
             }
         }
+    }
+
+    private void sanitizeVisibleFillMarkers(QuDetailDTO qu) {
+        if (qu == null) {
+            return;
+        }
+        qu.setContent(restoreFillMarkers(qu.getContent()));
+        qu.setAnalysis(restoreFillMarkers(qu.getAnalysis()));
+        qu.setRemark(restoreFillMarkers(qu.getRemark()));
+
+        if (CollectionUtils.isEmpty(qu.getAnswerList())) {
+            return;
+        }
+        for (QuAnswerDTO answer : qu.getAnswerList()) {
+            if (answer == null) {
+                continue;
+            }
+            answer.setContent(restoreFillMarkers(answer.getContent()));
+            answer.setAnalysis(restoreFillMarkers(answer.getAnalysis()));
+        }
+    }
+
+    private String restoreFillMarkers(String text) {
+        return FillProgramBlankProcessor.restoreFillMarkers(text);
     }
 }

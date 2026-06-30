@@ -37,8 +37,14 @@
 
         </el-form-item>
 
-        <el-form-item label="题目内容" prop="content">
-          <el-input v-model="postForm.content" type="textarea" :rows="isLongTextType ? 8 : 4" />
+        <el-form-item v-if="!isStemCodeSplitType" label="题目内容" prop="content">
+          <el-input
+            v-model="postForm.content"
+            type="textarea"
+            :rows="isProgramType ? 5 : (isLongTextType ? 8 : 4)"
+            :placeholder="contentPlaceholder"
+            :class="{ 'code-textarea': isFixProgramType && !isStemCodeSplitType }"
+          />
         </el-form-item>
 
         <el-form-item label="试题图片">
@@ -122,8 +128,8 @@
 
       </div>
 
-      <!-- 填空题：参考答案列表 -->
-      <div v-if="isFillType" class="filter-container" style="margin-top: 25px">
+      <!-- 普通填空题 -->
+      <div v-if="isNormalFillType" class="filter-container" style="margin-top: 25px">
 
         <el-button class="filter-item" type="primary" icon="el-icon-plus" size="small" plain @click="handleAddReference">
           添加参考答案
@@ -154,15 +160,81 @@
 
       </div>
 
-      <!-- 阅读/编程/改错/综合：大文本参考答案 -->
-      <div v-if="isLongTextType" class="filter-container" style="margin-top: 25px">
+      <!-- 程序填空 / 阅读程序 / 程序改错：题干+代码分栏 -->
+      <div v-if="isStemCodeSplitType" class="filter-container" style="margin-top: 25px">
 
-        <el-form-item label="参考答案/评分要点">
+        <el-form-item label="题干说明">
+          <el-input
+            v-model="stemText"
+            type="textarea"
+            :rows="4"
+            :placeholder="stemPlaceholder"
+          />
+        </el-form-item>
+
+        <el-form-item :label="codeSectionLabel">
+          <el-input
+            v-model="codeText"
+            type="textarea"
+            :rows="16"
+            :placeholder="codePlaceholder"
+            class="code-textarea"
+          />
+        </el-form-item>
+
+        <!-- 程序填空：多空答案表 -->
+        <template v-if="isFillProgramType">
+          <el-button class="filter-item" type="primary" icon="el-icon-plus" size="small" plain @click="handleAddReference">
+            添加空位答案
+          </el-button>
+
+          <el-table
+            :data="postForm.answerList"
+            :border="true"
+            style="width: 100%;"
+          >
+            <el-table-column label="空位" width="100" align="center">
+              <template v-slot="scope">第{{ scope.$index + 1 }}空</template>
+            </el-table-column>
+
+            <el-table-column label="参考答案">
+              <template v-slot="scope">
+                <el-input v-model="scope.row.content" type="textarea" placeholder="如 a[num] 或 a[num]=b[n]" />
+              </template>
+            </el-table-column>
+
+            <el-table-column label="操作" align="center" width="100px">
+              <template v-slot="scope">
+                <el-button type="danger" icon="el-icon-delete" circle @click="removeItem(scope.$index)" />
+              </template>
+            </el-table-column>
+
+          </el-table>
+        </template>
+
+        <!-- 阅读程序 / 程序改错：单条参考答案 -->
+        <el-form-item v-else :label="referenceLabel">
           <el-input
             v-model="referenceText"
             type="textarea"
-            :rows="10"
-            placeholder="请输入参考答案或评分要点，保存时将写入 answerList"
+            :rows="isFixProgramType ? 16 : 6"
+            :placeholder="referencePlaceholder"
+            :class="{ 'code-textarea': isFixProgramType }"
+          />
+        </el-form-item>
+
+      </div>
+
+      <!-- 编程题 / 综合应用：大文本参考答案 -->
+      <div v-if="isLongTextType" class="filter-container" style="margin-top: 25px">
+
+        <el-form-item :label="referenceLabel">
+          <el-input
+            v-model="referenceText"
+            type="textarea"
+            :rows="isProgramType ? 16 : 10"
+            :placeholder="referencePlaceholder"
+            :class="{ 'code-textarea': isProgramType || postForm.quType === 8 }"
           />
         </el-form-item>
 
@@ -182,7 +254,8 @@
 import { fetchDetail, saveData } from '@/api/qu/qu'
 import RepoSelect from '@/components/RepoSelect'
 import FileUpload from '@/components/FileUpload'
-import { QU_TYPE_OPTIONS, isObjectiveQuType, isFillQuType } from '@/filters'
+import { QU_TYPE_OPTIONS, isObjectiveQuType, isFillQuType, isFillProgramQuType, isNormalFillQuType, isStemCodeQuType, isReadProgramQuType, isProgramQuType, isFixProgramQuType } from '@/filters'
+import { subjectiveAnswerLabel, parseFillProgramContent, stemCodeSectionLabel } from '@/utils/quFormat'
 
 export default {
   name: 'QuDetail',
@@ -193,6 +266,8 @@ export default {
       quTypeDisabled: false,
       itemImage: true,
       referenceText: '',
+      stemText: '',
+      codeText: '',
 
       levels: [
         { value: 1, label: '普通' },
@@ -232,8 +307,74 @@ export default {
     isFillType() {
       return isFillQuType(this.postForm.quType)
     },
+    isNormalFillType() {
+      return isNormalFillQuType(this.postForm.quType)
+    },
+    isFillProgramType() {
+      return isFillProgramQuType(this.postForm.quType)
+    },
+    isReadProgramType() {
+      return isReadProgramQuType(this.postForm.quType)
+    },
+    isFixProgramType() {
+      return isFixProgramQuType(this.postForm.quType)
+    },
+    isStemCodeSplitType() {
+      return isStemCodeQuType(this.postForm.quType)
+    },
     isLongTextType() {
-      return this.postForm.quType >= 6 && this.postForm.quType <= 9
+      return this.postForm.quType === 7 || this.postForm.quType === 9
+    },
+    isProgramType() {
+      return this.postForm.quType === 7
+    },
+    referenceLabel() {
+      return subjectiveAnswerLabel(this.postForm.quType)
+    },
+    codeSectionLabel() {
+      return stemCodeSectionLabel(this.postForm.quType)
+    },
+    stemPlaceholder() {
+      if (this.isReadProgramType) {
+        return '请输入题目说明，例如：阅读下列程序，写出运行结果...'
+      }
+      if (this.isFixProgramType) {
+        return '请输入题目说明，例如：以下程序存在错误，请改正...'
+      }
+      return '请输入题目说明，例如：以下函数把 b 字符串连接到 a 字符串的后面...'
+    },
+    codePlaceholder() {
+      if (this.isReadProgramType) {
+        return '请输入完整程序代码，保留换行和缩进'
+      }
+      if (this.isFixProgramType) {
+        return '请输入有错程序代码，保留换行和缩进'
+      }
+      return '请输入带空位的程序代码骨架，保留换行和缩进'
+    },
+    contentPlaceholder() {
+      if (this.postForm.quType === 7) {
+        return '请输入题干描述（题目要求与背景），不要包含程序代码'
+      }
+      if (this.postForm.quType === 6) {
+        return '请输入题干，可包含待阅读的程序代码'
+      }
+      if (this.postForm.quType === 8) {
+        return '请输入题干及有错程序代码'
+      }
+      return '请输入题目内容'
+    },
+    referencePlaceholder() {
+      if (this.postForm.quType === 7) {
+        return '请输入完整参考程序代码'
+      }
+      if (this.postForm.quType === 8) {
+        return '请输入改正后的程序代码'
+      }
+      if (this.postForm.quType === 6) {
+        return '请输入程序运行结果或参考答案'
+      }
+      return '请输入参考答案或评分要点'
     }
   },
   created() {
@@ -248,6 +389,8 @@ export default {
     handleTypeChange(v) {
       this.postForm.answerList = []
       this.referenceText = ''
+      this.stemText = ''
+      this.codeText = ''
       if (v === 3) {
         this.postForm.answerList.push({ isRight: true, content: '正确', analysis: '' })
         this.postForm.answerList.push({ isRight: false, content: '错误', analysis: '' })
@@ -260,11 +403,20 @@ export default {
         this.postForm.answerList.push({ isRight: false, content: '', analysis: '' })
       }
 
-      if (v === 4 || v === 5) {
+      if (v === 4) {
         this.postForm.answerList.push({ isRight: true, content: '', analysis: '' })
       }
 
-      if (v >= 6 && v <= 9) {
+      if (v === 5) {
+        this.postForm.answerList.push({ isRight: true, content: '', analysis: '' })
+        this.postForm.answerList.push({ isRight: true, content: '', analysis: '' })
+      }
+
+      if (v === 6 || v === 8) {
+        this.referenceText = ''
+      }
+
+      if (v === 7 || v === 9) {
         this.referenceText = ''
       }
     },
@@ -282,6 +434,26 @@ export default {
     },
 
     syncReferenceTextBeforeSave() {
+      if (this.isStemCodeSplitType) {
+        const stem = (this.stemText || '').trim()
+        const code = (this.codeText || '').trim()
+        if (stem && code) {
+          this.postForm.content = stem + '\n\n' + code
+        } else if (code) {
+          this.postForm.content = code
+        } else {
+          this.postForm.content = stem
+        }
+        if (this.isFillProgramType) {
+          this.postForm.answerList.forEach(item => {
+            item.isRight = true
+          })
+        } else if (this.referenceText && this.referenceText.trim()) {
+          this.postForm.answerList = [{ isRight: true, content: this.referenceText.trim(), analysis: '' }]
+        } else {
+          this.postForm.answerList = []
+        }
+      }
       if (this.isLongTextType) {
         if (this.referenceText && this.referenceText.trim()) {
           this.postForm.answerList = [{ isRight: true, content: this.referenceText.trim(), analysis: '' }]
@@ -289,10 +461,22 @@ export default {
           this.postForm.answerList = []
         }
       }
-      if (this.isFillType) {
+      if (this.isFillType && !this.isFillProgramType) {
         this.postForm.answerList.forEach(item => {
           item.isRight = true
         })
+      }
+    },
+
+    loadStemCodeFields() {
+      if (!this.isStemCodeSplitType) {
+        return
+      }
+      const parsed = parseFillProgramContent(this.postForm.content)
+      this.stemText = parsed.stem
+      this.codeText = parsed.code
+      if (!this.isFillProgramType && this.postForm.answerList && this.postForm.answerList.length > 0) {
+        this.referenceText = this.postForm.answerList.map(item => item.content).join('\n\n')
       }
     },
 
@@ -302,6 +486,7 @@ export default {
         if (this.isLongTextType && this.postForm.answerList && this.postForm.answerList.length > 0) {
           this.referenceText = this.postForm.answerList.map(item => item.content).join('\n\n')
         }
+        this.loadStemCodeFields()
       })
     },
     submitForm() {
@@ -350,11 +535,49 @@ export default {
         }
       }
 
-      if (this.isFillType) {
+      if (this.isNormalFillType || this.isFillProgramType) {
         const validAnswers = (this.postForm.answerList || []).filter(item => item.content && item.content.trim())
         if (validAnswers.length === 0) {
           this.$message({
-            message: '填空题至少要填写一个参考答案！',
+            message: this.isFillProgramType ? '程序填空题至少要填写一个空的参考答案！' : '填空题至少要填写一个参考答案！',
+            type: 'warning'
+          })
+          return
+        }
+      }
+
+      if (this.isStemCodeSplitType && !this.codeText.trim()) {
+        this.$message({
+          message: `${this.codeSectionLabel}不能为空！`,
+          type: 'warning'
+        })
+        return
+      }
+
+      if (this.isReadProgramType) {
+        if (!this.referenceText || !this.referenceText.trim()) {
+          this.$message({
+            message: '阅读程序题必须填写运行结果/参考答案！',
+            type: 'warning'
+          })
+          return
+        }
+      }
+
+      if (this.isFixProgramType) {
+        if (!this.referenceText || !this.referenceText.trim()) {
+          this.$message({
+            message: '程序改错题必须填写改正后程序！',
+            type: 'warning'
+          })
+          return
+        }
+      }
+
+      if (this.isProgramType) {
+        if (!this.referenceText || !this.referenceText.trim()) {
+          this.$message({
+            message: '编程题必须填写参考程序代码！',
             type: 'warning'
           })
           return
@@ -388,5 +611,11 @@ export default {
 </script>
 
 <style scoped>
+
+.code-textarea >>> textarea {
+  font-family: Consolas, Monaco, 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+}
 
 </style>
