@@ -39,8 +39,11 @@ public class QuestionAiImportController extends BaseController {
             @RequestParam(value = "file", required = false) MultipartFile file,
             @RequestParam(value = "text", required = false) String text,
             @RequestParam("repoIds") List<String> repoIds,
-            @RequestParam(value = "level", defaultValue = "1") Integer level) {
-        QuestionImportTaskCreateRespDTO resp = questionImportTaskService.createTask(file, text, repoIds, level);
+            @RequestParam(value = "level", defaultValue = "1") Integer level,
+            @RequestParam(value = "importMode", defaultValue = "SMART") String importMode,
+            @RequestParam(value = "deepAiNormalize", required = false) Boolean deepAiNormalize) {
+        QuestionImportTaskCreateRespDTO resp = questionImportTaskService.createTask(file, text, repoIds, level,
+                importMode, deepAiNormalize);
         return success(resp);
     }
 

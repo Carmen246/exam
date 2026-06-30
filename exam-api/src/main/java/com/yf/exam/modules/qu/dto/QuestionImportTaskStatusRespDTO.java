@@ -17,7 +17,7 @@ public class QuestionImportTaskStatusRespDTO implements Serializable {
     @ApiModelProperty("任务ID")
     private String taskId;
 
-    @ApiModelProperty("状态：PENDING/EXTRACTING/NORMALIZING/PARSING/COMPLETED/FAILED")
+    @ApiModelProperty("状态")
     private String status;
 
     @ApiModelProperty("状态描述")
@@ -29,11 +29,20 @@ public class QuestionImportTaskStatusRespDTO implements Serializable {
     @ApiModelProperty("当前阶段说明")
     private String message;
 
+    @ApiModelProperty("处理模式：FAST/SMART/DEEP")
+    private String importMode;
+
     @ApiModelProperty("总批次数")
     private Integer totalBatches;
 
     @ApiModelProperty("已完成批次数")
     private Integer completedBatches;
+
+    @ApiModelProperty("失败批次数")
+    private Integer failedBatchCount;
+
+    @ApiModelProperty("进入深度清洗的批次数")
+    private Integer deepCleanBatchCount;
 
     @ApiModelProperty("文件名")
     private String fileName;

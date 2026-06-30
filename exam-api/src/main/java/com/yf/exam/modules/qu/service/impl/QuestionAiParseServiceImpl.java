@@ -244,6 +244,28 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     }
 
     @Override
+    public List<String> splitParseBatches(String text) {
+        if (StringUtils.isBlank(text)) {
+            return new ArrayList<>();
+        }
+        return splitQuestionText(text, maxBatchLength(DEFAULT_PARSE_BATCH_LENGTH), PARSE_BATCH_QUESTION_COUNT);
+    }
+
+    @Override
+    public QuestionParseRespDTO parseSingleBatch(QuestionParseReqDTO reqDTO, String batchNo) {
+        checkRequest(reqDTO);
+        return parseQuestionsBatch(reqDTO, reqDTO.getText(), batchNo);
+    }
+
+    @Override
+    public String normalizeSingleBatch(String text, String batchNo) {
+        if (StringUtils.isBlank(text)) {
+            throw new ServiceException("待清洗文本不能为空");
+        }
+        return normalizeTextWithRetry(text, batchNo).getNormalizedText();
+    }
+
+    @Override
     public QuestionParseRespDTO parseQuestions(QuestionParseReqDTO reqDTO) {
         return parseQuestions(reqDTO, null);
     }

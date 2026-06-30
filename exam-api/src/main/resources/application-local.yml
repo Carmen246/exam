@@ -90,3 +90,6 @@ exam:
     normalize-batch-length: 10000
     normalize-batch-question-count: 20
     normalize-concurrency: 3
+    ai-concurrency: 3
+    parse-fallback-ratio: 0.3
+    parse-fallback-min-expected: 3

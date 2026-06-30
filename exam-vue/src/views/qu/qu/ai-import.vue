@@ -36,11 +36,23 @@
             </el-form-item>
           </el-col>
         </el-row>
+        <el-row :gutter="16">
+          <el-col :xs="24">
+            <el-form-item label="处理模式">
+              <el-radio-group v-model="parseForm.importMode" :disabled="taskRunning">
+                <el-radio label="SMART">智能模式</el-radio>
+                <el-radio label="FAST">极速模式</el-radio>
+                <el-radio label="DEEP">深度模式</el-radio>
+              </el-radio-group>
+              <div class="import-mode-tip">智能模式（默认）：每批本地清洗后直接 AI 解析，失败批次自动深度清洗后重试。</div>
+            </el-form-item>
+          </el-col>
+        </el-row>
       </el-form>
 
-      <el-card v-if="taskRunning || taskFailed" shadow="never" class="task-progress-card">
+      <el-card v-if="taskRunning || taskFailed || taskPartialCompleted" shadow="never" class="task-progress-card">
         <div class="task-progress-header">
-          <span>{{ taskRunning ? '正在后台处理' : '任务处理失败' }}</span>
+          <span>{{ taskProgressTitle }}</span>
           <div class="task-progress-tags">
             <el-tag v-if="taskStatusLabel" size="mini">{{ taskStatusLabel }}</el-tag>
             <el-tag v-if="taskId" size="mini" type="info">任务 {{ taskId }}</el-tag>
@@ -48,14 +60,16 @@
         </div>
         <el-progress
           :percentage="taskProgress"
-          :status="taskFailed ? 'exception' : (taskProgress >= 100 ? 'success' : undefined)"
+          :status="taskFailed ? 'exception' : (taskPartialCompleted ? 'warning' : (taskProgress >= 100 ? 'success' : undefined))"
           :stroke-width="16"
         />
         <div class="task-progress-message">{{ taskMessage }}</div>
         <div v-if="taskTotalBatches > 0" class="task-progress-batch">
+          <span v-if="taskDeepCleanBatchCount > 0">深度清洗 {{ taskDeepCleanBatchCount }} 批 · </span>
           批次进度：{{ taskCompletedBatches }} / {{ taskTotalBatches }}
+          <span v-if="taskFailedBatchCount > 0"> · 失败 {{ taskFailedBatchCount }} 批</span>
         </div>
-        <div v-if="taskFailed" class="task-progress-actions">
+        <div v-if="taskFailed || taskPartialCompleted" class="task-progress-actions">
           <span v-if="retryHint" class="task-retry-hint">{{ retryHint }}</span>
           <el-button
             type="primary"
@@ -230,7 +244,8 @@ export default {
       parseForm: {
         repoIds: [],
         level: 1,
-        text: ''
+        text: '',
+        importMode: 'SMART'
       },
       levelOptions: [
         { label: '普通', value: 1 },
@@ -240,11 +255,14 @@ export default {
       taskId: '',
       taskRunning: false,
       taskFailed: false,
+      taskPartialCompleted: false,
       taskProgress: 0,
       taskMessage: '',
       taskStatusLabel: '',
       taskTotalBatches: 0,
       taskCompletedBatches: 0,
+      taskFailedBatchCount: 0,
+      taskDeepCleanBatchCount: 0,
       lastPolledStatus: '',
       taskHasNormalizedText: false,
       retryLoading: false,
@@ -288,19 +306,31 @@ export default {
       return '在这里粘贴试题文本，例如：1. Java属于什么类型的语言？ A. 编程语言 B. 数据库 C. 操作系统 D. 浏览器 答案：A'
     },
     retryHint() {
-      if (!this.taskFailed) {
+      if (!this.taskFailed && !this.taskPartialCompleted) {
         return ''
       }
-      if (!this.canRetryTask) {
+      if (!this.rawSourceText || !this.rawSourceText.trim()) {
         return '文档未提取成功，请重新上传文件'
       }
-      if (this.taskHasNormalizedText) {
-        return '清洗已完成，将从 AI 解析阶段继续'
+      if (this.taskPartialCompleted && this.taskFailedBatchCount > 0) {
+        return '失败 ' + this.taskFailedBatchCount + ' 批，点击重试失败批次'
       }
-      return '将从 AI 清洗阶段继续'
+      return '点击重试任务'
     },
     canRetryTask() {
-      return !!(this.rawSourceText && this.rawSourceText.trim())
+      if (!this.rawSourceText || !this.rawSourceText.trim()) {
+        return false
+      }
+      return this.taskFailed || (this.taskPartialCompleted && this.taskFailedBatchCount > 0)
+    },
+    taskProgressTitle() {
+      if (this.taskRunning) {
+        return '正在后台处理'
+      }
+      if (this.taskPartialCompleted) {
+        return '部分批次完成'
+      }
+      return '任务处理失败'
     }
   },
   beforeDestroy() {
@@ -372,7 +402,8 @@ export default {
           file: hasFile ? this.pendingFile : null,
           text: hasText ? this.parseForm.text.trim() : null,
           repoIds: this.parseForm.repoIds,
-          level: this.parseForm.level
+          level: this.parseForm.level,
+          importMode: this.parseForm.importMode
         }).then(res => {
           const data = res.data || {}
           this.taskId = data.taskId || ''
@@ -413,17 +444,27 @@ export default {
         this.applyTaskStatus(data)
         this.notifyStatusChange(prevStatus, data)
 
-        if (data.status === 'COMPLETED' || data.status === 'FAILED') {
+        if (data.status === 'COMPLETED' || data.status === 'PARTIAL_COMPLETED' || data.status === 'FAILED') {
           this.stopPolling()
           this.taskRunning = false
           this.fileLoading = false
           if (data.status === 'COMPLETED') {
+            this.taskPartialCompleted = false
+            this.taskFailed = false
             this.handleTaskCompleted(data)
+          } else if (data.status === 'PARTIAL_COMPLETED') {
+            this.taskPartialCompleted = true
+            this.taskFailed = false
+            this.handleTaskPartialCompleted(data)
           } else {
             this.taskFailed = true
+            this.taskPartialCompleted = false
             this.taskHasNormalizedText = !!(data.normalizedText && data.normalizedText.trim())
             if (data.rawText) {
               this.rawSourceText = data.rawText
+            }
+            if (data.questions && data.questions.length) {
+              this.questions = data.questions
             }
             this.$message.error(data.errorMessage || '导入任务处理失败')
           }
@@ -434,7 +475,7 @@ export default {
     },
 
     handleRetryTask() {
-      if (!this.taskId || !this.taskFailed) {
+      if (!this.taskId || (!this.taskFailed && !this.taskPartialCompleted)) {
         return
       }
 
@@ -442,11 +483,12 @@ export default {
       retryImportTask(this.taskId).then(res => {
         const data = res.data || {}
         this.taskFailed = false
+        this.taskPartialCompleted = false
         this.taskRunning = true
         this.retryLoading = false
         this.lastPolledStatus = ''
         this.applyTaskStatus(data)
-        this.$message.info(data.message || '正在重试导入任务')
+        this.$message.info(data.message || '正在重试失败批次')
         this.startPolling()
       }, () => {
         this.retryLoading = false
@@ -488,6 +530,17 @@ export default {
       this.taskMessage = data.message || data.statusLabel || ''
       this.taskTotalBatches = data.totalBatches || 0
       this.taskCompletedBatches = data.completedBatches || 0
+      this.taskFailedBatchCount = data.failedBatchCount || 0
+      this.taskDeepCleanBatchCount = data.deepCleanBatchCount || 0
+    },
+
+    handleTaskPartialCompleted(data) {
+      this.questions = data.questions || []
+      this.rawSourceText = data.rawText || ''
+      if (data.normalizedText) {
+        this.parseForm.text = data.normalizedText
+      }
+      this.$message.warning(data.message || '部分批次解析失败，可预览已成功题目并重试失败批次')
     },
 
     handleTaskCompleted(data) {
@@ -514,12 +567,15 @@ export default {
       this.taskId = ''
       this.taskRunning = false
       this.taskFailed = false
+      this.taskPartialCompleted = false
       this.fileLoading = false
       this.taskProgress = 0
       this.taskMessage = ''
       this.taskStatusLabel = ''
       this.taskTotalBatches = 0
       this.taskCompletedBatches = 0
+      this.taskFailedBatchCount = 0
+      this.taskDeepCleanBatchCount = 0
       this.taskHasNormalizedText = false
       if (clearLastStatus) {
         this.lastPolledStatus = ''
@@ -692,6 +748,14 @@ export default {
 
 .level-select {
   width: 180px;
+}
+
+.deep-normalize-tip,
+.import-mode-tip {
+  margin-top: 8px;
+  color: #909399;
+  font-size: 12px;
+  line-height: 20px;
 }
 
 .main-row {

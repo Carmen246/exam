@@ -8,6 +8,8 @@ import com.yf.exam.modules.qu.dto.QuestionNormalizeTextReqDTO;
 import com.yf.exam.modules.qu.dto.QuestionNormalizeTextRespDTO;
 import com.yf.exam.modules.qu.support.ImportTaskProgressListener;
 
+import java.util.List;
+
 public interface QuestionAiParseService {
 
     QuestionParseRespDTO parseQuestions(QuestionParseReqDTO reqDTO);
@@ -19,4 +21,10 @@ public interface QuestionAiParseService {
     QuestionNormalizeTextRespDTO normalizeText(QuestionNormalizeTextReqDTO reqDTO);
 
     QuestionNormalizeTextRespDTO normalizeText(QuestionNormalizeTextReqDTO reqDTO, ImportTaskProgressListener listener);
+
+    List<String> splitParseBatches(String text);
+
+    QuestionParseRespDTO parseSingleBatch(QuestionParseReqDTO reqDTO, String batchNo);
+
+    String normalizeSingleBatch(String text, String batchNo);
 }

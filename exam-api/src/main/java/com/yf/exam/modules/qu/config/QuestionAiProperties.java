@@ -28,4 +28,13 @@ public class QuestionAiProperties {
 
     /** 清洗并发批次数 */
     private Integer normalizeConcurrency = 3;
+
+    /** 快速解析时，识别题数低于预期的比例则自动深度清洗 */
+    private Double parseFallbackRatio = 0.3;
+
+    /** 触发比例兜底的最小预期题数 */
+    private Integer parseFallbackMinExpected = 3;
+
+    /** 批次流水线统一 AI 并发数（清洗+解析共享） */
+    private Integer aiConcurrency = 3;
 }

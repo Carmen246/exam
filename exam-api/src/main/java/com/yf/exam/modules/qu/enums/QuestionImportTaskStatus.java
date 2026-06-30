@@ -10,6 +10,7 @@ public enum QuestionImportTaskStatus {
     NORMALIZING("AI清洗文本"),
     PARSING("AI解析试题"),
     COMPLETED("解析完成"),
+    PARTIAL_COMPLETED("部分完成"),
     FAILED("处理失败");
 
     private final String label;

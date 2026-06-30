@@ -68,6 +68,7 @@ export function createImportTask(data) {
     data.repoIds.forEach(id => formData.append('repoIds', id))
   }
   formData.append('level', data.level || 1)
+  formData.append('importMode', data.importMode || 'SMART')
   return post('/exam/api/qu/import-task', formData, {
     headers: { 'Content-Type': 'multipart/form-data' }
   })
