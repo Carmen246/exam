@@ -209,6 +209,23 @@ export function download(url, data, fileName) {
 }
 
 /**
+ * 封装get请求
+ * @param url
+ * @param config
+ * @returns {Promise}
+ */
+export function get(url, config = {}) {
+  return new Promise((resolve, reject) => {
+    instance.get(url, config)
+      .then(response => {
+        resolve(response)
+      }, err => {
+        reject(err)
+      })
+  })
+}
+
+/**
  * 封装post请求
  * @param url
  * @param data

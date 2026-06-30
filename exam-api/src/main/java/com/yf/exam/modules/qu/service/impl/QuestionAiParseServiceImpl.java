@@ -27,13 +27,24 @@ import com.yf.exam.modules.repo.service.RepoService;
 import org.springframework.transaction.annotation.Transactional;
 import com.yf.exam.modules.qu.dto.QuestionNormalizeTextReqDTO;
 import com.yf.exam.modules.qu.dto.QuestionNormalizeTextRespDTO;
+import com.yf.exam.modules.qu.support.ImportTaskProgressListener;
 
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 @Service
 public class QuestionAiParseServiceImpl implements QuestionAiParseService {
+
+    private static final int DEFAULT_NORMALIZE_BATCH_LENGTH = 3500;
+    private static final int DEFAULT_PARSE_BATCH_LENGTH = 1800;
+    private static final int FALLBACK_PARSE_BATCH_LENGTH = 1000;
+    private static final int NORMALIZE_BATCH_QUESTION_COUNT = 6;
+    private static final int PARSE_BATCH_QUESTION_COUNT = 2;
+    private static final int FALLBACK_PARSE_BATCH_QUESTION_COUNT = 1;
+    private static final int AI_RETRY_TIMES = 2;
+    private static final Pattern QUESTION_START_PATTERN = Pattern.compile("(?m)(?=^\\s*\\d+[\\.．、]\\s*)");
 
     private static final String SYSTEM_PROMPT =
             "你是在线考试系统的试题解析器。你只能返回合法 json，不要返回 Markdown，不要解释，不要使用代码块。"
@@ -66,21 +77,80 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
     @Override
     public QuestionNormalizeTextRespDTO normalizeText(QuestionNormalizeTextReqDTO reqDTO) {
+        return normalizeText(reqDTO, null);
+    }
+
+    @Override
+    public QuestionNormalizeTextRespDTO normalizeText(QuestionNormalizeTextReqDTO reqDTO,
+            ImportTaskProgressListener listener) {
         if (reqDTO == null || StringUtils.isBlank(reqDTO.getText())) {
             throw new ServiceException("待清洗文本不能为空");
         }
 
-        if (properties.getMaxTextLength() != null
-                && reqDTO.getText().length() > properties.getMaxTextLength()) {
-            throw new ServiceException("文本过长，请拆分后再清洗");
+        List<String> chunks = splitQuestionText(reqDTO.getText(), maxBatchLength(DEFAULT_NORMALIZE_BATCH_LENGTH),
+                NORMALIZE_BATCH_QUESTION_COUNT);
+        if (chunks.size() > 1) {
+            StringBuilder normalizedText = new StringBuilder();
+            int batchIndex = 1;
+            for (String chunk : chunks) {
+                if (listener != null) {
+                    listener.onBatchProgress(batchIndex - 1, chunks.size(),
+                            "正在AI清洗第" + batchIndex + "批文本（共" + chunks.size() + "批）");
+                }
+                QuestionNormalizeTextRespDTO part = normalizeTextWithRetry(chunk, String.valueOf(batchIndex));
+                if (StringUtils.isNotBlank(part.getNormalizedText())) {
+                    if (normalizedText.length() > 0) {
+                        normalizedText.append("\n\n");
+                    }
+                    normalizedText.append(part.getNormalizedText().trim());
+                }
+                if (listener != null) {
+                    listener.onBatchProgress(batchIndex, chunks.size(),
+                            "已完成AI清洗第" + batchIndex + "批文本（共" + chunks.size() + "批）");
+                }
+                batchIndex++;
+            }
+
+            if (normalizedText.length() == 0) {
+                throw new ServiceException("AI未返回清洗后的文本");
+            }
+
+            QuestionNormalizeTextRespDTO respDTO = new QuestionNormalizeTextRespDTO();
+            respDTO.setRawText(reqDTO.getText());
+            respDTO.setNormalizedText(normalizedText.toString());
+            return respDTO;
         }
 
+        if (listener != null) {
+            listener.onBatchProgress(0, 1, "正在AI清洗文本");
+        }
+        QuestionNormalizeTextRespDTO respDTO = normalizeTextWithRetry(reqDTO.getText(), "1");
+        if (listener != null) {
+            listener.onBatchProgress(1, 1, "AI清洗完成");
+        }
+        respDTO.setRawText(reqDTO.getText());
+        return respDTO;
+    }
+
+    private QuestionNormalizeTextRespDTO normalizeTextWithRetry(String text, String batchNo) {
+        ServiceException lastException = null;
+        for (int i = 1; i <= AI_RETRY_TIMES; i++) {
+            try {
+                return normalizeTextOnce(text);
+            } catch (ServiceException e) {
+                lastException = e;
+            }
+        }
+        throw new ServiceException("第" + batchNo + "批AI清洗失败：" + lastException.getMessage());
+    }
+
+    private QuestionNormalizeTextRespDTO normalizeTextOnce(String text) {
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(SystemMessage.from(NORMALIZE_SYSTEM_PROMPT));
-        messages.add(UserMessage.from("待清洗试题文本：\n" + reqDTO.getText()));
+        messages.add(UserMessage.from("待清洗试题文本：\n" + text));
 
         Response<AiMessage> response = getChatModel().generate(messages);
-        String answer = response.content().text();
+        String answer = readAiText(response);
         String json = extractJson(answer);
 
         QuestionNormalizeTextRespDTO respDTO;
@@ -94,14 +164,108 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             throw new ServiceException("AI未返回清洗后的文本");
         }
 
-        respDTO.setRawText(reqDTO.getText());
+        respDTO.setRawText(text);
         return respDTO;
     }
 
     @Override
     public QuestionParseRespDTO parseQuestions(QuestionParseReqDTO reqDTO) {
+        return parseQuestions(reqDTO, null);
+    }
+
+    @Override
+    public QuestionParseRespDTO parseQuestions(QuestionParseReqDTO reqDTO, ImportTaskProgressListener listener) {
         checkRequest(reqDTO);
 
+        List<String> chunks = splitQuestionText(reqDTO.getText(), maxBatchLength(DEFAULT_PARSE_BATCH_LENGTH),
+                PARSE_BATCH_QUESTION_COUNT);
+        if (chunks.size() > 1) {
+            QuestionParseRespDTO result = new QuestionParseRespDTO();
+            List<QuDetailDTO> questions = new ArrayList<>();
+            List<String> rawJsonList = new ArrayList<>();
+
+            int batchIndex = 1;
+            for (String chunk : chunks) {
+                if (listener != null) {
+                    listener.onBatchProgress(batchIndex - 1, chunks.size(),
+                            "正在AI解析第" + batchIndex + "批试题（共" + chunks.size() + "批）");
+                }
+                QuestionParseRespDTO batchResp = parseQuestionsBatch(reqDTO, chunk, String.valueOf(batchIndex));
+                questions.addAll(batchResp.getQuestions());
+                rawJsonList.add(batchResp.getRawJson());
+                if (listener != null) {
+                    listener.onBatchProgress(batchIndex, chunks.size(),
+                            "已完成AI解析第" + batchIndex + "批试题（共" + chunks.size() + "批）");
+                }
+                batchIndex++;
+            }
+
+            if (CollectionUtils.isEmpty(questions)) {
+                throw new ServiceException("AI未解析出任何试题");
+            }
+
+            result.setQuestions(questions);
+            result.setCount(questions.size());
+            result.setRawJson("{\"batches\":" + JSON.toJSONString(rawJsonList) + "}");
+            return result;
+        }
+
+        if (listener != null) {
+            listener.onBatchProgress(0, 1, "正在AI解析试题");
+        }
+        QuestionParseRespDTO result = parseQuestionsBatch(reqDTO, reqDTO.getText(), "1");
+        if (listener != null) {
+            listener.onBatchProgress(1, 1, "AI解析完成");
+        }
+        return result;
+    }
+
+    private QuestionParseRespDTO parseQuestionsBatch(QuestionParseReqDTO sourceReq, String chunk, String batchNo) {
+        try {
+            return parseQuestionsWithRetry(copyParseReq(sourceReq, chunk), batchNo);
+        } catch (ServiceException e) {
+            List<String> smallerChunks = splitQuestionText(chunk, FALLBACK_PARSE_BATCH_LENGTH,
+                    FALLBACK_PARSE_BATCH_QUESTION_COUNT);
+            if (smallerChunks.size() <= 1) {
+                throw new ServiceException("第" + batchNo + "批AI解析失败：" + e.getMessage());
+            }
+
+            QuestionParseRespDTO result = new QuestionParseRespDTO();
+            List<QuDetailDTO> questions = new ArrayList<>();
+            List<String> rawJsonList = new ArrayList<>();
+            int subIndex = 1;
+            for (String smallerChunk : smallerChunks) {
+                QuestionParseRespDTO part = parseQuestionsWithRetry(copyParseReq(sourceReq, smallerChunk),
+                        batchNo + "." + subIndex);
+                questions.addAll(part.getQuestions());
+                rawJsonList.add(part.getRawJson());
+                subIndex++;
+            }
+
+            if (CollectionUtils.isEmpty(questions)) {
+                throw new ServiceException("第" + batchNo + "批AI未解析出任何试题");
+            }
+
+            result.setQuestions(questions);
+            result.setCount(questions.size());
+            result.setRawJson("{\"batches\":" + JSON.toJSONString(rawJsonList) + "}");
+            return result;
+        }
+    }
+
+    private QuestionParseRespDTO parseQuestionsWithRetry(QuestionParseReqDTO reqDTO, String batchNo) {
+        ServiceException lastException = null;
+        for (int i = 1; i <= AI_RETRY_TIMES; i++) {
+            try {
+                return parseQuestionsOnce(reqDTO);
+            } catch (ServiceException e) {
+                lastException = e;
+            }
+        }
+        throw new ServiceException("第" + batchNo + "批AI解析失败：" + lastException.getMessage());
+    }
+
+    private QuestionParseRespDTO parseQuestionsOnce(QuestionParseReqDTO reqDTO) {
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(SystemMessage.from(SYSTEM_PROMPT));
         messages.add(SystemMessage.from(
@@ -114,7 +278,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         messages.add(UserMessage.from(buildUserPrompt(reqDTO)));
 
         Response<AiMessage> response = getChatModel().generate(messages);
-        String answer = response.content().text();
+        String answer = readAiText(response);
         String json = extractJson(answer);
 
         QuestionParseRespDTO respDTO;
@@ -158,11 +322,107 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         if (reqDTO == null || StringUtils.isBlank(reqDTO.getText())) {
             throw new ServiceException("待解析文本不能为空");
         }
+    }
 
-        if (properties.getMaxTextLength() != null
-                && reqDTO.getText().length() > properties.getMaxTextLength()) {
-            throw new ServiceException("文本过长，请拆分后再解析");
+    private QuestionParseReqDTO copyParseReq(QuestionParseReqDTO source, String text) {
+        QuestionParseReqDTO reqDTO = new QuestionParseReqDTO();
+        reqDTO.setText(text);
+        reqDTO.setRepoIds(source.getRepoIds());
+        reqDTO.setLevel(source.getLevel());
+        return reqDTO;
+    }
+
+    private int maxBatchLength(int defaultValue) {
+        Integer configured = properties.getMaxTextLength();
+        if (configured == null || configured <= 0) {
+            return defaultValue;
         }
+        return Math.min(configured, defaultValue);
+    }
+
+    private List<String> splitQuestionText(String text, int maxLength, int maxQuestionCount) {
+        List<String> blocks = splitQuestionBlocks(text);
+        if (blocks.size() <= 1) {
+            return splitByLength(text, maxLength);
+        }
+
+        List<String> chunks = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        int questionCount = 0;
+
+        for (String block : blocks) {
+            if (StringUtils.isBlank(block)) {
+                continue;
+            }
+
+            String value = block.trim();
+            boolean shouldFlush = current.length() > 0
+                    && (current.length() + value.length() + 2 > maxLength || questionCount >= maxQuestionCount);
+            if (shouldFlush) {
+                chunks.add(current.toString().trim());
+                current.setLength(0);
+                questionCount = 0;
+            }
+
+            if (value.length() > maxLength) {
+                if (current.length() > 0) {
+                    chunks.add(current.toString().trim());
+                    current.setLength(0);
+                    questionCount = 0;
+                }
+                chunks.addAll(splitByLength(value, maxLength));
+                continue;
+            }
+
+            if (current.length() > 0) {
+                current.append("\n\n");
+            }
+            current.append(value);
+            questionCount++;
+        }
+
+        if (current.length() > 0) {
+            chunks.add(current.toString().trim());
+        }
+        return chunks;
+    }
+
+    private List<String> splitQuestionBlocks(String text) {
+        List<String> blocks = new ArrayList<>();
+        String normalized = text.replace("\r\n", "\n").replace("\r", "\n");
+        String[] parts = QUESTION_START_PATTERN.split(normalized);
+        for (String part : parts) {
+            if (StringUtils.isNotBlank(part)) {
+                blocks.add(part.trim());
+            }
+        }
+        return blocks;
+    }
+
+    private List<String> splitByLength(String text, int maxLength) {
+        List<String> chunks = new ArrayList<>();
+        String normalized = text.replace("\r\n", "\n").replace("\r", "\n").trim();
+        if (StringUtils.isBlank(normalized)) {
+            return chunks;
+        }
+
+        int start = 0;
+        while (start < normalized.length()) {
+            int end = Math.min(start + maxLength, normalized.length());
+            if (end < normalized.length()) {
+                int newline = normalized.lastIndexOf("\n", end);
+                if (newline > start + maxLength / 2) {
+                    end = newline;
+                }
+            }
+
+            String chunk = normalized.substring(start, end).trim();
+            if (StringUtils.isNotBlank(chunk)) {
+                chunks.add(chunk);
+            }
+            start = end;
+        }
+        return chunks;
     }
 
     private String buildUserPrompt(QuestionParseReqDTO reqDTO) {
@@ -181,6 +441,13 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 + "11. 不要编造题目，不要输出无法判断答案的题目。\n\n"
                 + "原始文本：\n"
                 + reqDTO.getText();
+    }
+
+    private String readAiText(Response<AiMessage> response) {
+        if (response == null || response.content() == null || StringUtils.isBlank(response.content().text())) {
+            throw new ServiceException("AI返回内容为空");
+        }
+        return response.content().text();
     }
 
     private String extractJson(String text) {

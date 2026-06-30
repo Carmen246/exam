@@ -37,19 +37,19 @@ public class QueryInterceptor implements Interceptor {
     @Override
     public Object intercept(Invocation invocation) throws Throwable {
 
-        StatementHandler statementHandler = (StatementHandler) realTarget(invocation.getTarget());
-        MetaObject metaObject = MetaObject.forObject(statementHandler, SystemMetaObject.DEFAULT_OBJECT_FACTORY, SystemMetaObject.DEFAULT_OBJECT_WRAPPER_FACTORY, new DefaultReflectorFactory());
-        MappedStatement mappedStatement = (MappedStatement) metaObject.getValue("delegate.mappedStatement");
-
-        SqlCommandType sqlCommandType = mappedStatement.getSqlCommandType();
-
-        if (SqlCommandType.SELECT == sqlCommandType) {
-            String sql = statementHandler.getBoundSql().getSql();
-
-            if (sql.contains(USER_FILTER)) {
-                String outSql = this.parseSql(sql);
-                metaObject.setValue("delegate.boundSql.sql", outSql);
+        try {
+            StatementHandler statementHandler = (StatementHandler) realTarget(invocation.getTarget());
+            MetaObject metaObject = MetaObject.forObject(statementHandler, SystemMetaObject.DEFAULT_OBJECT_FACTORY, SystemMetaObject.DEFAULT_OBJECT_WRAPPER_FACTORY, new DefaultReflectorFactory());
+            MappedStatement mappedStatement = getMappedStatement(metaObject);
+            if (mappedStatement != null && SqlCommandType.SELECT == mappedStatement.getSqlCommandType()) {
+                String sql = statementHandler.getBoundSql().getSql();
+                if (StringUtils.contains(sql, USER_FILTER)) {
+                    String outSql = this.parseSql(sql);
+                    setBoundSql(metaObject, outSql);
+                }
             }
+        } catch (Exception e) {
+            log.warn("QueryInterceptor process failed, use original sql.", e);
         }
 
         return invocation.proceed();
@@ -71,6 +71,26 @@ public class QueryInterceptor implements Interceptor {
             return realTarget(metaObject.getValue("h.target"));
         }
         return target;
+    }
+
+    private MappedStatement getMappedStatement(MetaObject metaObject) {
+        if (metaObject.hasGetter("delegate.mappedStatement")) {
+            return (MappedStatement) metaObject.getValue("delegate.mappedStatement");
+        }
+        if (metaObject.hasGetter("mappedStatement")) {
+            return (MappedStatement) metaObject.getValue("mappedStatement");
+        }
+        return null;
+    }
+
+    private void setBoundSql(MetaObject metaObject, String sql) {
+        if (metaObject.hasGetter("delegate.boundSql")) {
+            metaObject.setValue("delegate.boundSql.sql", sql);
+            return;
+        }
+        if (metaObject.hasGetter("boundSql")) {
+            metaObject.setValue("boundSql.sql", sql);
+        }
     }
 
     private SysUserLoginDTO getLoginUser() {

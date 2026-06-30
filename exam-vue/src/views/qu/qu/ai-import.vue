@@ -4,7 +4,7 @@
       <div slot="header" class="panel-header">
         <div>
           <div class="panel-title">AI导入试题</div>
-          <div class="panel-subtitle">选择题库和难度后，上传文档或粘贴文本，AI解析后确认入库。</div>
+          <div class="panel-subtitle">选择题库和难度后，上传文档或粘贴文本，后台异步解析，完成后确认入库。</div>
         </div>
         <el-button size="small" @click="goBack">返回题目列表</el-button>
       </div>
@@ -38,6 +38,25 @@
         </el-row>
       </el-form>
 
+      <el-card v-if="taskRunning || taskFailed" shadow="never" class="task-progress-card">
+        <div class="task-progress-header">
+          <span>{{ taskRunning ? '正在后台处理' : '任务处理失败' }}</span>
+          <div class="task-progress-tags">
+            <el-tag v-if="taskStatusLabel" size="mini">{{ taskStatusLabel }}</el-tag>
+            <el-tag v-if="taskId" size="mini" type="info">任务 {{ taskId }}</el-tag>
+          </div>
+        </div>
+        <el-progress
+          :percentage="taskProgress"
+          :status="taskFailed ? 'exception' : (taskProgress >= 100 ? 'success' : undefined)"
+          :stroke-width="16"
+        />
+        <div class="task-progress-message">{{ taskMessage }}</div>
+        <div v-if="taskTotalBatches > 0" class="task-progress-batch">
+          批次进度：{{ taskCompletedBatches }} / {{ taskTotalBatches }}
+        </div>
+      </el-card>
+
       <el-row :gutter="18" class="main-row">
         <el-col :xs="24" :md="10">
           <el-card shadow="never" class="work-card">
@@ -52,24 +71,35 @@
                 :auto-upload="false"
                 :show-file-list="false"
                 accept=".docx,.txt"
+                :disabled="taskRunning"
                 :on-change="handleFileChange"
               >
-                <el-button icon="el-icon-upload2" type="primary" plain :loading="fileLoading">选择docx/txt文件</el-button>
+                <el-button icon="el-icon-upload2" type="primary" plain :loading="fileLoading" :disabled="taskRunning">选择docx/txt文件</el-button>
               </el-upload>
-              <div class="upload-tip">也可以直接在下方粘贴试题文本。</div>
+              <el-alert
+                v-if="pendingFile && !taskRunning"
+                class="file-selected-alert"
+                :title="'已选择：' + fileInfo.fileName"
+                :description="fileReadyTip"
+                type="info"
+                :closable="false"
+                show-icon
+              />
+              <div v-else class="upload-tip">也可以直接在下方粘贴试题文本；上传文件后会自动提取、清洗并解析。</div>
             </div>
 
             <el-input
               v-model="parseForm.text"
               type="textarea"
               :rows="18"
-              placeholder="在这里粘贴试题文本，例如：1. Java属于什么类型的语言？ A. 编程语言 B. 数据库 C. 操作系统 D. 浏览器 答案：A"
+              :readonly="taskRunning"
+              :placeholder="textPlaceholder"
             />
 
             <div class="source-footer">
               <span class="text-count">当前文本 {{ textLength }} 字</span>
               <div>
-                <el-button size="small" @click="clearSource">清空</el-button>
+                <el-button size="small" :disabled="taskRunning" @click="clearSource">清空</el-button>
                 <el-button
                   size="small"
                   icon="el-icon-view"
@@ -79,15 +109,13 @@
                   查看清洗前文本
                 </el-button>
                 <el-button
+                  type="primary"
                   size="small"
-                  icon="el-icon-edit-outline"
-                  :loading="normalizeLoading"
-                  @click="handleNormalize"
+                  icon="el-icon-magic-stick"
+                  :loading="taskRunning"
+                  @click="handleStartImport"
                 >
-                  AI清洗文本
-                </el-button>
-                <el-button type="primary" size="small" icon="el-icon-magic-stick" :loading="parseLoading" @click="handleParse">
-                  开始AI解析
+                  开始AI导入
                 </el-button>
               </div>
             </div>
@@ -103,7 +131,7 @@
               </div>
             </div>
 
-            <el-empty v-if="questions.length === 0" description="解析后将在这里预览试题" />
+            <el-empty v-if="questions.length === 0" :description="taskRunning ? '正在解析，请稍候...' : '解析完成后将在这里预览试题'" />
 
             <div v-else class="question-list">
               <div v-for="(item, index) in questions" :key="index" class="question-item">
@@ -112,16 +140,15 @@
                     <el-tag size="mini" :type="quTypeTag(item.quType)">{{ quTypeLabel(item.quType) }}</el-tag>
                     <span class="question-title">{{ index + 1 }}. {{ item.content }}</span>
                   </div>
-                  <el-button type="text" class="danger-link" @click="removeQuestion(index)">删除</el-button>
+                  <el-button type="text" class="danger-link" :disabled="taskRunning" @click="removeQuestion(index)">删除</el-button>
                 </div>
-
 
                 <div class="answer-list">
                   <div
                     v-for="(answer, answerIndex) in item.answerList"
-                  :key="answerIndex"
-                 class="answer-item"
-                  :class="{ right: answer.isRight }"
+                    :key="answerIndex"
+                    class="answer-item"
+                    :class="{ right: answer.isRight }"
                   >
                     <span class="answer-prefix">{{ optionLabel(answerIndex) }}.</span>
                     <span class="answer-content">{{ answer.content }}</span>
@@ -140,8 +167,8 @@
             </div>
 
             <div class="preview-footer">
-              <el-button :disabled="questions.length === 0" @click="handleParse">重新解析</el-button>
-              <el-button type="primary" :disabled="questions.length === 0" :loading="importLoading" @click="handleConfirmImport">
+              <el-button :disabled="taskRunning || (!pendingFile && !parseForm.text)" @click="handleStartImport">重新导入</el-button>
+              <el-button type="primary" :disabled="questions.length === 0 || taskRunning" :loading="importLoading" @click="handleConfirmImport">
                 确认导入题库
               </el-button>
             </div>
@@ -164,7 +191,6 @@
       />
       <div slot="footer">
         <el-button @click="rawTextDialogVisible = false">关闭</el-button>
-        <el-button type="primary" @click="replaceWithRawText">使用清洗前文本替换</el-button>
       </div>
     </el-dialog>
   </div>
@@ -172,17 +198,16 @@
 
 <script>
 import RepoSelect from '@/components/RepoSelect'
-import { parseQuestionText, parseQuestions, confirmQuestionImport } from '@/api/qu/qu'
-import { post } from '@/utils/request'
+import { createImportTask, getImportTaskStatus, confirmQuestionImport, TASK_POLL_INTERVAL } from '@/api/qu/qu'
 
 export default {
   name: 'AiImportQu',
   components: { RepoSelect },
   data() {
     return {
+      pendingFile: null,
       fileLoading: false,
-      normalizeLoading: false,
-      parseLoading: false,
+      importSource: 'text',
       importLoading: false,
       rawTextDialogVisible: false,
       rawSourceText: '',
@@ -199,6 +224,16 @@ export default {
         { label: '较难', value: 2 }
       ],
       questions: [],
+      taskId: '',
+      taskRunning: false,
+      taskFailed: false,
+      taskProgress: 0,
+      taskMessage: '',
+      taskStatusLabel: '',
+      taskTotalBatches: 0,
+      taskCompletedBatches: 0,
+      lastPolledStatus: '',
+      pollTimer: null,
       rules: {
         repoIds: [
           { required: true, type: 'array', min: 1, message: '请至少选择一个题库', trigger: 'change' }
@@ -214,7 +249,7 @@ export default {
       if (this.questions.length > 0) {
         return 3
       }
-      if (this.parseForm.text) {
+      if (this.taskRunning || this.parseForm.text || this.pendingFile) {
         return 2
       }
       if (this.parseForm.repoIds && this.parseForm.repoIds.length > 0) {
@@ -224,7 +259,22 @@ export default {
     },
     textLength() {
       return this.parseForm.text ? this.parseForm.text.length : 0
+    },
+    fileReadyTip() {
+      if (this.parseForm.repoIds && this.parseForm.repoIds.length > 0) {
+        return '题库已选择，将自动开始提取文档并 AI 解析。'
+      }
+      return '请先选择题库，然后点击「开始AI导入」。'
+    },
+    textPlaceholder() {
+      if (this.taskRunning && this.importSource === 'file') {
+        return '文档正在后台解析，完成后将在这里显示清洗后的文本...'
+      }
+      return '在这里粘贴试题文本，例如：1. Java属于什么类型的语言？ A. 编程语言 B. 数据库 C. 操作系统 D. 浏览器 答案：A'
     }
+  },
+  beforeDestroy() {
+    this.stopPolling()
   },
   methods: {
     handleFileChange(file) {
@@ -240,89 +290,185 @@ export default {
         return
       }
 
-      this.fileLoading = true
-      parseQuestionText(rawFile).then(res => {
-        this.fileInfo = {
-          fileName: res.data.fileName
-        }
-        const rawText = res.data.rawText || ''
-        this.rawSourceText = rawText
-        this.questions = []
-        this.$message.success('文档解析完成，正在自动AI清洗文本')
-        this.normalizeTextValue(rawText).then(normalizedText => {
-          this.parseForm.text = normalizedText
-          this.$message.success('AI清洗完成，已填入清洗后的文本')
-          this.fileLoading = false
-        }, () => {
-          this.parseForm.text = rawText
-          this.$message.warning('AI清洗失败，已保留原始解析文本')
-          this.fileLoading = false
+      this.pendingFile = rawFile
+      this.importSource = 'file'
+      this.fileInfo = { fileName: fileName }
+      this.parseForm.text = ''
+      this.questions = []
+      this.rawSourceText = ''
+      this.resetTaskState(false)
+
+      const repoReady = this.parseForm.repoIds && this.parseForm.repoIds.length > 0
+      if (repoReady) {
+        this.$message.success('文件已上传，正在提取文档并 AI 解析')
+        this.$nextTick(() => {
+          this.handleStartImport()
         })
-      }, () => {
-        this.fileLoading = false
-      })
-    },
-
-    handleNormalize() {
-      if (!this.parseForm.text || this.parseForm.text.trim().length === 0) {
-        this.$message.warning('请先上传文件或粘贴试题文本')
-        return
+      } else {
+        this.$message.info('已选择文件：' + fileName + '，请先选择题库后点击「开始AI导入」')
       }
-
-      this.normalizeLoading = true
-      this.rawSourceText = this.parseForm.text
-      this.normalizeTextValue(this.parseForm.text).then(normalizedText => {
-        this.parseForm.text = normalizedText
-        this.questions = []
-        this.$message.success('AI清洗完成，请检查文本后再解析')
-        this.normalizeLoading = false
-      }, () => {
-        this.normalizeLoading = false
-      })
     },
 
-    normalizeTextValue(text) {
-      return post('/exam/api/qu/normalize-text', {
-        text: text
-      }).then(res => {
-        const data = res.data || {}
-        if (!data.normalizedText) {
-          return Promise.reject(new Error('AI未返回清洗后的文本'))
-        }
-        return data.normalizedText
-      })
-    },
-
-    handleParse() {
+    handleStartImport() {
       this.$refs.parseForm.validate(valid => {
         if (!valid) {
+          if (this.pendingFile) {
+            this.$message.warning('请先选择题库后再解析文档')
+          }
           return
         }
 
-        if (!this.parseForm.text || this.parseForm.text.trim().length === 0) {
+        const hasFile = !!this.pendingFile
+        const hasText = this.parseForm.text && this.parseForm.text.trim().length > 0
+        if (!hasFile && !hasText) {
           this.$message.warning('请先上传文件或粘贴试题文本')
           return
         }
 
-        this.parseLoading = true
-        parseQuestions({
+        if (hasFile) {
+          this.importSource = 'file'
+        } else {
+          this.importSource = 'text'
+        }
+
+        this.resetTaskState(false)
+        this.taskRunning = true
+        this.fileLoading = hasFile
+        this.taskProgress = 0
+        this.taskMessage = hasFile ? '文件已上传，正在创建导入任务...' : '正在创建导入任务...'
+        this.questions = []
+
+        createImportTask({
+          file: hasFile ? this.pendingFile : null,
+          text: hasText ? this.parseForm.text.trim() : null,
           repoIds: this.parseForm.repoIds,
-          level: this.parseForm.level,
-          text: this.parseForm.text
+          level: this.parseForm.level
         }).then(res => {
           const data = res.data || {}
-          this.questions = data.questions || []
-          if (this.questions.length === 0) {
-            this.$message.warning('未解析出试题，请调整文本后重试')
-            this.parseLoading = false
-            return
-          }
-          this.$message.success('AI解析完成，请确认试题内容')
-          this.parseLoading = false
+          this.taskId = data.taskId || ''
+          this.taskMessage = hasFile ? '任务已创建，正在提取文档文本...' : '任务已创建，正在后台处理...'
+          this.startPolling()
         }, () => {
-          this.parseLoading = false
+          this.taskRunning = false
+          this.fileLoading = false
+          this.taskFailed = true
+          this.taskMessage = '创建导入任务失败'
         })
       })
+    },
+
+    startPolling() {
+      this.stopPolling()
+      this.pollTaskStatus()
+      this.pollTimer = setInterval(() => {
+        this.pollTaskStatus()
+      }, TASK_POLL_INTERVAL)
+    },
+
+    stopPolling() {
+      if (this.pollTimer) {
+        clearInterval(this.pollTimer)
+        this.pollTimer = null
+      }
+    },
+
+    pollTaskStatus() {
+      if (!this.taskId) {
+        return
+      }
+
+      getImportTaskStatus(this.taskId).then(res => {
+        const data = res.data || {}
+        const prevStatus = this.lastPolledStatus
+        this.applyTaskStatus(data)
+        this.notifyStatusChange(prevStatus, data)
+
+        if (data.status === 'COMPLETED' || data.status === 'FAILED') {
+          this.stopPolling()
+          this.taskRunning = false
+          this.fileLoading = false
+          if (data.status === 'COMPLETED') {
+            this.handleTaskCompleted(data)
+          } else {
+            this.taskFailed = true
+            this.$message.error(data.errorMessage || '导入任务处理失败')
+          }
+        }
+      }, () => {
+        // 轮询失败时不打断任务，等待下次重试
+      })
+    },
+
+    notifyStatusChange(prevStatus, data) {
+      const status = data.status || ''
+      if (!status || status === prevStatus) {
+        return
+      }
+      this.lastPolledStatus = status
+
+      if (this.importSource === 'file') {
+        const fileStageTips = {
+          EXTRACTING: '正在提取文档文本...',
+          NORMALIZING: '文档解析完成，正在 AI 清洗文本',
+          PARSING: 'AI 清洗完成，正在解析试题',
+          COMPLETED: 'AI 解析完成，请确认试题内容'
+        }
+        if (fileStageTips[status] && status !== 'COMPLETED') {
+          this.$message.info(fileStageTips[status])
+        }
+        return
+      }
+
+      const textStageTips = {
+        NORMALIZING: '正在 AI 清洗文本...',
+        PARSING: '正在 AI 解析试题...'
+      }
+      if (textStageTips[status]) {
+        this.$message.info(textStageTips[status])
+      }
+    },
+
+    applyTaskStatus(data) {
+      this.taskProgress = data.progress || 0
+      this.taskStatusLabel = data.statusLabel || ''
+      this.taskMessage = data.message || data.statusLabel || ''
+      this.taskTotalBatches = data.totalBatches || 0
+      this.taskCompletedBatches = data.completedBatches || 0
+    },
+
+    handleTaskCompleted(data) {
+      this.questions = data.questions || []
+      this.rawSourceText = data.rawText || ''
+      if (data.normalizedText) {
+        this.parseForm.text = data.normalizedText
+      }
+
+      if (this.questions.length === 0) {
+        this.$message.warning('未解析出试题，请调整文本后重试')
+        return
+      }
+
+      if (this.importSource === 'file') {
+        this.$message.success('文档解析完成，共识别 ' + this.questions.length + ' 题，请确认后入库')
+      } else {
+        this.$message.success('AI 解析完成，请确认试题内容')
+      }
+    },
+
+    resetTaskState(clearLastStatus = true) {
+      this.stopPolling()
+      this.taskId = ''
+      this.taskRunning = false
+      this.taskFailed = false
+      this.fileLoading = false
+      this.taskProgress = 0
+      this.taskMessage = ''
+      this.taskStatusLabel = ''
+      this.taskTotalBatches = 0
+      this.taskCompletedBatches = 0
+      if (clearLastStatus) {
+        this.lastPolledStatus = ''
+      }
     },
 
     handleConfirmImport() {
@@ -368,24 +514,19 @@ export default {
       this.rawTextDialogVisible = true
     },
 
-    replaceWithRawText() {
-      this.parseForm.text = this.rawSourceText
-      this.questions = []
-      this.rawTextDialogVisible = false
-      this.$message.success('已替换为清洗前文本')
-    },
-
     clearSource() {
-      this.fileInfo = {
-        fileName: ''
-      }
+      this.pendingFile = null
+      this.importSource = 'text'
+      this.fileInfo = { fileName: '' }
       this.parseForm.text = ''
       this.rawSourceText = ''
       this.rawTextDialogVisible = false
       this.questions = []
+      this.resetTaskState()
     },
 
     goBack() {
+      this.stopPolling()
       this.$router.push({ name: 'ListQu' })
     },
 
@@ -445,6 +586,37 @@ export default {
   margin-bottom: 18px;
 }
 
+.task-progress-card {
+  margin-bottom: 18px;
+  border-radius: 6px;
+}
+
+.task-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+
+.task-progress-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-progress-message {
+  margin-top: 10px;
+  color: #606266;
+  font-size: 13px;
+}
+
+.task-progress-batch {
+  margin-top: 6px;
+  color: #909399;
+  font-size: 12px;
+}
+
 .base-form {
   padding: 12px 0 0;
 }
@@ -471,6 +643,10 @@ export default {
 
 .upload-box {
   padding: 4px 0 14px;
+}
+
+.file-selected-alert {
+  margin-top: 10px;
 }
 
 .upload-tip {

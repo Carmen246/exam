@@ -1,4 +1,7 @@
-import { post, upload, download } from '@/utils/request'
+import { post, upload, download, get } from '@/utils/request'
+
+const AI_IMPORT_TIMEOUT = 600000
+const TASK_POLL_INTERVAL = 2000
 
 /**
  * 题库详情
@@ -50,19 +53,42 @@ export function importExcel(file) {
 }
 
 /**
- * AI解析试题文档文本
- * @param file
+ * 创建 AI 导入异步任务
+ * @param {{ file?: File, text?: string, repoIds: string[], level?: number }} data
  */
-export function parseQuestionText(file) {
-  return upload('/exam/api/qu/parse-text', file)
+export function createImportTask(data) {
+  const formData = new FormData()
+  if (data.file) {
+    formData.append('file', data.file)
+  }
+  if (data.text) {
+    formData.append('text', data.text)
+  }
+  if (data.repoIds && data.repoIds.length) {
+    data.repoIds.forEach(id => formData.append('repoIds', id))
+  }
+  formData.append('level', data.level || 1)
+  return post('/exam/api/qu/import-task', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
 }
+
+/**
+ * 查询 AI 导入任务进度
+ * @param taskId
+ */
+export function getImportTaskStatus(taskId) {
+  return get('/exam/api/qu/import-task/' + taskId, { silent: true })
+}
+
+export { TASK_POLL_INTERVAL }
 
 /**
  * AI解析试题
  * @param data
  */
 export function parseQuestions(data) {
-  return post('/exam/api/qu/parse-questions', data)
+  return post('/exam/api/qu/parse-questions', data, { timeout: AI_IMPORT_TIMEOUT })
 }
 
 /**

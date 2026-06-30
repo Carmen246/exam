@@ -9,7 +9,10 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.File;
+import java.io.FileInputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -23,8 +26,18 @@ public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseSe
         if (file == null || file.isEmpty()) {
             throw new ServiceException("上传文件不能为空！");
         }
+        return parseText(file.getOriginalFilename(), () -> file.getInputStream(), () -> file.getBytes());
+    }
 
-        String fileName = file.getOriginalFilename();
+    @Override
+    public String parseText(File file) {
+        if (file == null || !file.exists() || !file.isFile()) {
+            throw new ServiceException("上传文件不能为空！");
+        }
+        return parseText(file.getName(), () -> new FileInputStream(file), () -> Files.readAllBytes(file.toPath()));
+    }
+
+    private String parseText(String fileName, InputStreamSupplier inputStreamSupplier, BytesSupplier bytesSupplier) {
         String ext = FilenameUtils.getExtension(fileName);
 
         if (StringUtils.isBlank(ext)) {
@@ -33,18 +46,30 @@ public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseSe
 
         try {
             if ("docx".equalsIgnoreCase(ext)) {
-                Document document = documentParser.parse(file.getInputStream());
+                Document document = documentParser.parse(inputStreamSupplier.get());
                 return cleanQuestionText(document.text());
             }
 
             if ("txt".equalsIgnoreCase(ext)) {
-                return cleanQuestionText(new String(file.getBytes(), StandardCharsets.UTF_8));
+                return cleanQuestionText(new String(bytesSupplier.get(), StandardCharsets.UTF_8));
             }
 
             throw new ServiceException("暂只支持 docx、txt 文件！");
+        } catch (ServiceException e) {
+            throw e;
         } catch (Exception e) {
             throw new ServiceException("试题文档解析失败：" + e.getMessage());
         }
+    }
+
+    @FunctionalInterface
+    private interface InputStreamSupplier {
+        java.io.InputStream get() throws Exception;
+    }
+
+    @FunctionalInterface
+    private interface BytesSupplier {
+        byte[] get() throws Exception;
     }
 
     private String cleanQuestionText(String rawText) {

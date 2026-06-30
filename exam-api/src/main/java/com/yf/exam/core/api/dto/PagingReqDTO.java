@@ -38,8 +38,8 @@ public class PagingReqDTO<T> {
      */
     public Page toPage(){
         Page page = new Page();
-        page.setCurrent(this.current);
-        page.setSize(this.size);
+        page.setCurrent(this.current == null || this.current < 1 ? 1 : this.current);
+        page.setSize(this.size == null || this.size < 1 ? 10 : this.size);
         return page;
     }
 

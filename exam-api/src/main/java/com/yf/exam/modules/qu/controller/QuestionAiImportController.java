@@ -8,8 +8,13 @@ import io.swagger.annotations.ApiOperation;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.shiro.authz.annotation.RequiresRoles;
 import org.springframework.beans.factory.annotation.Autowired;
+import com.yf.exam.modules.qu.dto.QuestionImportTaskCreateRespDTO;
+import com.yf.exam.modules.qu.dto.QuestionImportTaskStatusRespDTO;
+import com.yf.exam.modules.qu.service.QuestionImportTaskService;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+
+import java.util.List;
 import com.yf.exam.modules.qu.service.QuestionAiParseService;
 import com.yf.exam.modules.qu.dto.QuestionParseReqDTO;
 import com.yf.exam.modules.qu.dto.QuestionParseRespDTO;
@@ -23,6 +28,28 @@ public class QuestionAiImportController extends BaseController {
 
     @Autowired
     private QuestionDocumentParseService documentParseService;
+
+    @Autowired
+    private QuestionImportTaskService questionImportTaskService;
+
+    @RequiresRoles("sa")
+    @ApiOperation(value = "创建AI导入异步任务")
+    @PostMapping("/import-task")
+    public ApiRest<QuestionImportTaskCreateRespDTO> createImportTask(
+            @RequestParam(value = "file", required = false) MultipartFile file,
+            @RequestParam(value = "text", required = false) String text,
+            @RequestParam("repoIds") List<String> repoIds,
+            @RequestParam(value = "level", defaultValue = "1") Integer level) {
+        QuestionImportTaskCreateRespDTO resp = questionImportTaskService.createTask(file, text, repoIds, level);
+        return success(resp);
+    }
+
+    @RequiresRoles("sa")
+    @ApiOperation(value = "查询AI导入任务进度")
+    @GetMapping("/import-task/{taskId}")
+    public ApiRest<QuestionImportTaskStatusRespDTO> getImportTaskStatus(@PathVariable("taskId") String taskId) {
+        return success(questionImportTaskService.getTaskStatus(taskId));
+    }
 
     @RequiresRoles("sa")
     @PostMapping("/parse-text")
