@@ -27,6 +27,7 @@ import com.yf.exam.modules.qu.dto.QuestionImportRespDTO;
 import com.yf.exam.modules.qu.service.QuService;
 import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
 import com.yf.exam.modules.qu.support.ProgramContentFormatter;
+import com.yf.exam.modules.qu.support.QuestionBoundaryHelper;
 import com.yf.exam.modules.repo.service.RepoService;
 import org.springframework.transaction.annotation.Transactional;
 import com.yf.exam.modules.qu.dto.QuestionNormalizeTextReqDTO;
@@ -40,6 +41,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Service
@@ -52,12 +54,13 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     private static final int PARSE_BATCH_QUESTION_COUNT = 2;
     private static final int FALLBACK_PARSE_BATCH_QUESTION_COUNT = 1;
     private static final int AI_RETRY_TIMES = 2;
-    private static final Pattern QUESTION_START_PATTERN = Pattern.compile("(?m)(?=^\\s*\\d+[\\.．、]\\s*)");
 
     private static final Pattern CODE_START_PATTERN = Pattern.compile(
             "(?m)^\\s*(#include\\s|#import\\s|#define\\s|using\\s+\\w|void\\s+main|int\\s+main|"
                     + "public\\s+class|class\\s+\\w+|def\\s+\\w|function\\s+\\w|package\\s+\\w|"
                     + "(?:int|char|void|float|double|long|short|unsigned)\\s+\\w+\\s*\\()");
+    private static final Pattern INLINE_OPTION_PATTERN = Pattern.compile(
+            "(?s)([A-D])\\s*[\\.、．]\\s*(.*?)(?=\\s+[A-D]\\s*[\\.、．]\\s*|$)");
 
     private static final String SYSTEM_PROMPT =
             "你是在线考试系统的试题解析器。你只能返回合法 json，不要返回 Markdown，不要解释，不要使用代码块。"
@@ -80,6 +83,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     + "普通填空题(4)：无大段代码骨架，content=题干，answerList=各空文字答案。"
                     + "程序填空题(5)：content=题干说明+程序代码全文(代码中空位必须用____表示，禁止把答案写进代码)，"
                     + "answerList=每个空的参考答案(按出现顺序)，不要把完整程序放进 answerList。"
+                    + "程序填空选择题：代码后的(3)(4)(5)是空位编号不是题号，其后A/B/C/D是该空候选项不是新题；"
+                    + "仍按程序填空题解析，answerList只存各空正确答案，候选项可不写入answerList。"
                     + "阅读程序写结果题(6)：content=题干+完整程序(无空位)，answerList=运行结果。"
                     + "编程题(7)：content=仅题干，answerList[0]=完整参考程序，禁止把程序写进 content。"
                     + "程序改错题(8)：content=题干+有错程序，answerList=改正后程序；关键词“改错/改正/错误”。"
@@ -102,6 +107,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     + "8. 如果选项末尾出现与选项顺序一致的排版残留数字，例如 A. 编程语言1、B. 数据库2、C. 操作系统3、D. 浏览器4，删除这些尾部数字。"
                     + "9. 如果数字属于选项含义，例如 Java 8、HTTP 404、2的倍数，必须保留。"
                     + "10. 只返回合法 JSON，不要返回 Markdown，不要解释。"
+                    + "11. 程序填空题若出现(3)(4)(5)空位编号及后续A/B/C/D候选项，属于同一道题，不要拆成多道题。"
+                    + "12. 不要把上一题尾部选项(如D. area)与下一题题干(如下面程序的功能...)粘在同一题；新题题干前应换行。"
                     + "返回格式必须是：{\"normalizedText\":\"整理后的试题文本\"}";
 
     @Autowired
@@ -519,15 +526,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     }
 
     private List<String> splitQuestionBlocks(String text) {
-        List<String> blocks = new ArrayList<>();
-        String normalized = text.replace("\r\n", "\n").replace("\r", "\n");
-        String[] parts = QUESTION_START_PATTERN.split(normalized);
-        for (String part : parts) {
-            if (StringUtils.isNotBlank(part)) {
-                blocks.add(part.trim());
-            }
-        }
-        return blocks;
+        return QuestionBoundaryHelper.splitQuestionBlocks(text);
     }
 
     private List<String> splitByLength(String text, int maxLength) {
@@ -572,6 +571,12 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 + "   - 源文档若出现 {FILL:max<a[row][col]} 表示该处是第1空；多个 {FILL:...} 按顺序对应第1空、第2空...\n"
                 + "   - 若原文第二空为 min<max 但按题意应为 min>max，answerList 可写 min>max，并在 analysis 说明原文可能为 min<max。\n"
                 + "   - answerList 只存各空应填片段，不要把完整程序放进 answerList。\n"
+                + "   - 如果参考答案中同一空出现多种等价答案，例如\"a[num] / a[num]!='\\0'\"，"
+                + "必须保留在同一个 answerList 元素的 content 中，不要拆成多个答案项。\n"
+                + "   - 程序填空选择题：代码后的(3)(4)(5)或（3）（4）（5）是空位编号，不是新题号；"
+                + "紧随其后的A/B/C/D是该空的候选选项，不是整道选择题，不要拆成新题。\n"
+                + "   - 此类题仍解析为程序填空题 quType=5，answerList 只存每个空的正确答案，候选项可不写入 answerList。\n"
+                + "   - 程序填空题结束后，下一道新题(如「以下函数把b字符串...」)必须单独成题，不要与上一道合并。\n"
                 + "   - 与 quType=6(完整程序无空位)、quType=7(只给需求无骨架)、quType=8(改错)区分。\n"
                 + "7. 阅读程序写结果题 quType=6（重点）：\n"
                 + "   - 识别特征：给出完整程序(无空位)，要求写出运行结果/输出/程序功能分析。\n"
@@ -594,7 +599,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 + "14. 必须生成整体解析：每道题的 analysis 不能为空。\n"
                 + "15. 客观题 answerList 中每个选项的 analysis 不能为空。\n"
                 + "16. 程序代码保留换行，JSON 中用 \\n 表示换行。\n"
-                + "17. 不要编造题目，无法识别的题目不要输出。\n\n"
+                + "17. 不要编造题目，无法识别的题目不要输出。\n"
+                + "18. 上一题选项(如D. area)与下一题题干(如下面程序的功能...)属于不同题目，不要合并。\n\n"
                 + "原始文本：\n"
                 + reqDTO.getText();
     }
@@ -650,6 +656,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 qu.setRepoIds(reqDTO.getRepoIds());
             }
 
+            normalizeProgramChoiceQuestion(qu);
             normalizeFillProgramQuestion(qu);
             normalizeReadProgramQuestion(qu);
             normalizeFixProgramQuestion(qu);
@@ -782,6 +789,120 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     /**
      * 阅读程序题：content 存题干+完整程序，answerList 只存运行结果
      */
+    private void normalizeProgramChoiceQuestion(QuDetailDTO qu) {
+        if (!QuType.READ_PROGRAM.equals(qu.getQuType())) {
+            return;
+        }
+        if (StringUtils.isBlank(qu.getContent())) {
+            return;
+        }
+
+        ProgramChoiceOptions options = extractProgramChoiceOptions(qu.getContent());
+        if (options == null || options.answers.size() < 4) {
+            return;
+        }
+
+        String expectedAnswer = firstRightAnswerContent(qu.getAnswerList());
+        int rightIndex = findMatchingOptionIndex(options.answers, expectedAnswer);
+        if (rightIndex < 0) {
+            return;
+        }
+
+        List<QuAnswerDTO> answerList = new ArrayList<>();
+        for (int i = 0; i < options.answers.size(); i++) {
+            QuAnswerDTO answer = new QuAnswerDTO();
+            answer.setContent(options.answers.get(i));
+            answer.setIsRight(i == rightIndex);
+            answer.setImage("");
+            answer.setAnalysis("");
+            answerList.add(answer);
+        }
+
+        ProgramContentFormatter.StemCodeParts parts = programContentFormatter.splitStemAndCode(options.stemCode);
+        String content = programContentFormatter.mergeStemAndCode(parts.getStem(), parts.getCode());
+        qu.setQuType(QuType.RADIO);
+        qu.setContent(content);
+        qu.setAnswerList(answerList);
+    }
+
+    private ProgramChoiceOptions extractProgramChoiceOptions(String content) {
+        String text = StringUtils.defaultString(content).trim();
+        Matcher firstOption = Pattern.compile("(?s)\\sA\\s*[\\.、．]\\s*").matcher(text);
+        if (!firstOption.find()) {
+            return null;
+        }
+
+        String stemCode = text.substring(0, firstOption.start()).trim();
+        String optionText = text.substring(firstOption.start()).trim();
+        List<String> options = new ArrayList<>();
+        Matcher matcher = INLINE_OPTION_PATTERN.matcher(optionText);
+        while (matcher.find()) {
+            String option = matcher.group(2).trim();
+            if (StringUtils.isNotBlank(option)) {
+                options.add(option);
+            }
+        }
+        if (options.size() < 4 || !containsCodeBlock(stemCode)) {
+            return null;
+        }
+        return new ProgramChoiceOptions(stemCode, options);
+    }
+
+    private String firstRightAnswerContent(List<QuAnswerDTO> answers) {
+        if (CollectionUtils.isEmpty(answers)) {
+            return "";
+        }
+        for (QuAnswerDTO answer : answers) {
+            if (answer != null && Boolean.TRUE.equals(answer.getIsRight())) {
+                return StringUtils.defaultString(answer.getContent()).trim();
+            }
+        }
+        return StringUtils.defaultString(answers.get(0).getContent()).trim();
+    }
+
+    private int findMatchingOptionIndex(List<String> options, String expectedAnswer) {
+        if (CollectionUtils.isEmpty(options) || StringUtils.isBlank(expectedAnswer)) {
+            return -1;
+        }
+        int optionLetterIndex = optionLetterIndex(expectedAnswer);
+        if (optionLetterIndex >= 0 && optionLetterIndex < options.size()) {
+            return optionLetterIndex;
+        }
+        String normalizedExpected = normalizeChoiceText(expectedAnswer);
+        for (int i = 0; i < options.size(); i++) {
+            if (StringUtils.equals(normalizeChoiceText(options.get(i)), normalizedExpected)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private int optionLetterIndex(String expectedAnswer) {
+        Matcher matcher = Pattern.compile("(?is)^\\s*(?:答案[:：]?\\s*)?([A-D])\\s*(?:[\\.\\u3001\\uFF0E].*)?$")
+                .matcher(StringUtils.defaultString(expectedAnswer));
+        if (!matcher.matches()) {
+            return -1;
+        }
+        return Character.toUpperCase(matcher.group(1).charAt(0)) - 'A';
+    }
+
+    private String normalizeChoiceText(String text) {
+        return StringUtils.defaultString(text)
+                .replaceAll("^\\s*[A-Da-d]\\s*[\\.、．]\\s*", "")
+                .replaceAll("\\s+", "")
+                .trim();
+    }
+
+    private static class ProgramChoiceOptions {
+        private final String stemCode;
+        private final List<String> answers;
+
+        private ProgramChoiceOptions(String stemCode, List<String> answers) {
+            this.stemCode = stemCode;
+            this.answers = answers;
+        }
+    }
+
     private void normalizeReadProgramQuestion(QuDetailDTO qu) {
         if (!QuType.READ_PROGRAM.equals(qu.getQuType())) {
             return;

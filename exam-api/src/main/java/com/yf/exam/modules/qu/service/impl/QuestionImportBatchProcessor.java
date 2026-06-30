@@ -9,6 +9,7 @@ import com.yf.exam.modules.qu.entity.QuestionImportBatchState;
 import com.yf.exam.modules.qu.enums.QuestionImportMode;
 import com.yf.exam.modules.qu.service.QuestionAiParseService;
 import com.yf.exam.modules.qu.service.QuestionDocumentParseService;
+import com.yf.exam.modules.qu.support.QuestionBoundaryHelper;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -33,6 +34,9 @@ public class QuestionImportBatchProcessor {
             String batchNo, QuestionImportBatchState state, boolean retrying) {
         if (StringUtils.isBlank(chunk)) {
             throw new ServiceException("批次文本为空");
+        }
+        if (QuestionBoundaryHelper.isAnswerSheetFragment(chunk)) {
+            return BatchProcessResult.success(new ArrayList<>(), false);
         }
 
         state.markRunning(retrying ? QuestionImportBatchState.PHASE_RETRY : QuestionImportBatchState.PHASE_PARSE);

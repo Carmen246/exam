@@ -7,6 +7,7 @@ import io.swagger.annotations.ApiModelProperty;
 import lombok.Data;
 
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.List;
 
 @Data
@@ -47,6 +48,12 @@ public class QuestionImportTaskStatusRespDTO implements Serializable {
 
     @ApiModelProperty("文件名")
     private String fileName;
+
+    @ApiModelProperty("答案文档文件名")
+    private String answerFileName;
+
+    @ApiModelProperty("答案文档合并提示")
+    private List<String> mergeWarnings = new ArrayList<>();
 
     @ApiModelProperty("清洗前文本")
     private String rawText;

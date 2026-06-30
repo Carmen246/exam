@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.yf.exam.ability.upload.config.UploadConfig;
 import com.yf.exam.core.exception.ServiceException;
 import com.yf.exam.modules.qu.config.QuestionAiProperties;
+import com.yf.exam.modules.qu.dto.AnswerDocumentMergeResultDTO;
 import com.yf.exam.modules.qu.dto.ImportBatchStatusDTO;
 import com.yf.exam.modules.qu.dto.QuestionImportTaskCreateRespDTO;
 import com.yf.exam.modules.qu.dto.QuestionImportTaskStatusRespDTO;
@@ -17,6 +18,8 @@ import com.yf.exam.modules.qu.service.QuestionAiParseService;
 import com.yf.exam.modules.qu.service.QuestionDocumentParseService;
 import com.yf.exam.modules.qu.service.QuestionImportTaskService;
 import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
+import com.yf.exam.modules.qu.support.QuestionAnswerDocumentMerger;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,6 +40,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
+@Slf4j
 public class QuestionImportTaskServiceImpl implements QuestionImportTaskService {
 
     private static final long TASK_TTL_MS = 24 * 60 * 60 * 1000L;
@@ -62,12 +66,15 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
     private QuestionAiProperties questionAiProperties;
 
     @Autowired
+    private QuestionAnswerDocumentMerger answerDocumentMerger;
+
+    @Autowired
     @Qualifier("asyncExecutor")
     private ThreadPoolTaskExecutor asyncExecutor;
 
     @Override
-    public QuestionImportTaskCreateRespDTO createTask(MultipartFile file, String text, List<String> repoIds,
-            Integer level, String importMode, Boolean deepAiNormalize) {
+    public QuestionImportTaskCreateRespDTO createTask(MultipartFile file, MultipartFile answerFile, String text,
+            List<String> repoIds, Integer level, String importMode, Boolean deepAiNormalize) {
         cleanupExpiredTasks();
 
         if (CollectionUtils.isEmpty(repoIds)) {
@@ -94,6 +101,12 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
             task.setTempFile(saveTempFile(file, taskId));
         } else {
             task.setInputText(text.trim());
+        }
+
+        boolean hasAnswerFile = answerFile != null && !answerFile.isEmpty();
+        if (hasAnswerFile) {
+            task.setAnswerFileName(answerFile.getOriginalFilename());
+            task.setAnswerTempFile(saveTempFile(answerFile, taskId, "-answer"));
         }
 
         tasks.put(taskId, task);
@@ -129,7 +142,9 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
             failTask(task, e);
         } finally {
             deleteTempFile(task.getTempFile());
+            deleteTempFile(task.getAnswerTempFile());
             task.setTempFile(null);
+            task.setAnswerTempFile(null);
         }
     }
 
@@ -193,19 +208,37 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
     private void extractText(QuestionImportTask task) {
         updateTask(task, QuestionImportTaskStatus.EXTRACTING, PROGRESS_EXTRACTING, "正在提取文档文本");
 
-        String rawText;
+        String questionText;
         if (task.getTempFile() != null) {
-            rawText = documentParseService.extractRawText(task.getTempFile());
+            questionText = documentParseService.extractRawText(task.getTempFile());
         } else {
-            rawText = task.getInputText();
+            questionText = task.getInputText();
         }
 
-        if (StringUtils.isBlank(rawText)) {
+        if (StringUtils.isBlank(questionText)) {
             throw new ServiceException("未提取到有效试题文本");
         }
 
-        task.setRawText(rawText.trim());
-        task.setMessage("文档提取完成，共 " + task.getRawText().length() + " 字，正在切分批次...");
+        String mergedText = questionText.trim();
+        if (task.getAnswerTempFile() != null) {
+            String answerText = documentParseService.extractRawText(task.getAnswerTempFile());
+            AnswerDocumentMergeResultDTO mergeResult = answerDocumentMerger.merge(mergedText, answerText);
+            mergedText = mergeResult.getMergedText();
+            if (!CollectionUtils.isEmpty(mergeResult.getWarnings())) {
+                task.setMergeWarnings(new ArrayList<>(mergeResult.getWarnings()));
+                for (String warning : mergeResult.getWarnings()) {
+                    log.warn("答案文档合并提示：{}", warning);
+                }
+            }
+        }
+
+        task.setRawText(mergedText);
+        StringBuilder message = new StringBuilder("文档提取完成，共 ").append(task.getRawText().length()).append(" 字");
+        if (!CollectionUtils.isEmpty(task.getMergeWarnings())) {
+            message.append("，答案合并提示 ").append(task.getMergeWarnings().size()).append(" 条");
+        }
+        message.append("，正在切分批次...");
+        task.setMessage(message.toString());
     }
 
     private void runBatchPipeline(QuestionImportTask task, boolean retryFailedOnly, Integer retryBatchNo) {
@@ -432,6 +465,10 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
     }
 
     private File saveTempFile(MultipartFile file, String taskId) {
+        return saveTempFile(file, taskId, "");
+    }
+
+    private File saveTempFile(MultipartFile file, String taskId, String nameSuffix) {
         try {
             String ext = FilenameUtils.getExtension(file.getOriginalFilename());
             if (StringUtils.isBlank(ext)) {
@@ -439,7 +476,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
             }
 
             File dir = resolveAiImportDir();
-            File dest = new File(dir, taskId + "." + ext);
+            File dest = new File(dir, taskId + nameSuffix + "." + ext);
             file.transferTo(dest);
             return dest;
         } catch (ServiceException e) {
@@ -509,6 +546,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
             QuestionImportTask task = entry.getValue();
             if (now - task.getCreateTime() > TASK_TTL_MS) {
                 deleteTempFile(task.getTempFile());
+                deleteTempFile(task.getAnswerTempFile());
                 iterator.remove();
             }
         }
@@ -566,6 +604,8 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
         resp.setDeepCleanBatchCount(task.getDeepCleanBatchCount());
         resp.setImportMode(task.getImportMode());
         resp.setFileName(task.getFileName());
+        resp.setAnswerFileName(task.getAnswerFileName());
+        resp.setMergeWarnings(task.getMergeWarnings());
         resp.setErrorMessage(task.getErrorMessage());
         resp.setBatches(toBatchStatusList(task));
 

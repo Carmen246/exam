@@ -8,8 +8,8 @@ import java.util.List;
 
 public interface QuestionImportTaskService {
 
-    QuestionImportTaskCreateRespDTO createTask(MultipartFile file, String text, List<String> repoIds, Integer level,
-            String importMode, Boolean deepAiNormalize);
+    QuestionImportTaskCreateRespDTO createTask(MultipartFile file, MultipartFile answerFile, String text,
+            List<String> repoIds, Integer level, String importMode, Boolean deepAiNormalize);
 
     QuestionImportTaskStatusRespDTO getTaskStatus(String taskId);
 

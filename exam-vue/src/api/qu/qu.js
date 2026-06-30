@@ -61,6 +61,9 @@ export function createImportTask(data) {
   if (data.file) {
     formData.append('file', data.file)
   }
+  if (data.answerFile) {
+    formData.append('answerFile', data.answerFile)
+  }
   if (data.text) {
     formData.append('text', data.text)
   }

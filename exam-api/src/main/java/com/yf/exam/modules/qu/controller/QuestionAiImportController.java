@@ -37,13 +37,14 @@ public class QuestionAiImportController extends BaseController {
     @PostMapping("/import-task")
     public ApiRest<QuestionImportTaskCreateRespDTO> createImportTask(
             @RequestParam(value = "file", required = false) MultipartFile file,
+            @RequestParam(value = "answerFile", required = false) MultipartFile answerFile,
             @RequestParam(value = "text", required = false) String text,
             @RequestParam("repoIds") List<String> repoIds,
             @RequestParam(value = "level", defaultValue = "1") Integer level,
             @RequestParam(value = "importMode", defaultValue = "SMART") String importMode,
             @RequestParam(value = "deepAiNormalize", required = false) Boolean deepAiNormalize) {
-        QuestionImportTaskCreateRespDTO resp = questionImportTaskService.createTask(file, text, repoIds, level,
-                importMode, deepAiNormalize);
+        QuestionImportTaskCreateRespDTO resp = questionImportTaskService.createTask(file, answerFile, text, repoIds,
+                level, importMode, deepAiNormalize);
         return success(resp);
     }
 

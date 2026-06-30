@@ -126,18 +126,37 @@
                 :disabled="taskRunning"
                 :on-change="handleFileChange"
               >
-                <el-button icon="el-icon-upload2" type="primary" plain :loading="fileLoading" :disabled="taskRunning">选择docx/txt文件</el-button>
+                <el-button icon="el-icon-upload2" type="primary" plain :loading="fileLoading" :disabled="taskRunning">选择试卷文档(docx/txt)</el-button>
+              </el-upload>
+              <el-upload
+                action=""
+                :auto-upload="false"
+                :show-file-list="false"
+                accept=".docx,.txt"
+                :disabled="taskRunning"
+                :on-change="handleAnswerFileChange"
+                class="answer-upload"
+              >
+                <el-button icon="el-icon-document" plain :disabled="taskRunning">选择答案文档（可选）</el-button>
               </el-upload>
               <el-alert
                 v-if="pendingFile && !taskRunning"
                 class="file-selected-alert"
-                :title="'已选择：' + fileInfo.fileName"
+                :title="'已选择试卷：' + fileInfo.fileName"
                 :description="fileReadyTip"
                 type="info"
                 :closable="false"
                 show-icon
               />
-              <div v-else class="upload-tip">也可以直接在下方粘贴试题文本；上传文件后会自动提取、清洗并解析。</div>
+              <el-alert
+                v-if="pendingAnswerFile && !taskRunning"
+                class="file-selected-alert"
+                :title="'已选择答案文档：' + answerFileInfo.fileName"
+                type="success"
+                :closable="false"
+                show-icon
+              />
+              <div v-if="!pendingFile && !pendingAnswerFile" class="upload-tip">也可以直接在下方粘贴试题文本。上传试卷/答案文档后，点击「开始AI导入」开始解析。</div>
             </div>
 
             <el-input
@@ -182,6 +201,17 @@
                 <el-tag size="mini" type="success">共 {{ questions.length }} 题</el-tag>
               </div>
             </div>
+
+            <el-alert
+              v-if="mergeWarnings.length > 0"
+              class="merge-warning-alert"
+              title="答案文档合并提示"
+              type="warning"
+              :closable="false"
+              show-icon
+            >
+              <div v-for="(warning, wIndex) in mergeWarnings" :key="wIndex" class="merge-warning-item">{{ warning }}</div>
+            </el-alert>
 
             <el-empty v-if="questions.length === 0" :description="taskRunning ? '正在解析，请稍候...' : '解析完成后将在这里预览试题'" />
 
@@ -361,12 +391,16 @@ export default {
   data() {
     return {
       pendingFile: null,
+      pendingAnswerFile: null,
       fileLoading: false,
       importSource: 'text',
       importLoading: false,
       rawTextDialogVisible: false,
       rawSourceText: '',
       fileInfo: {
+        fileName: ''
+      },
+      answerFileInfo: {
         fileName: ''
       },
       parseForm: {
@@ -392,6 +426,7 @@ export default {
       taskFailedBatchCount: 0,
       taskDeepCleanBatchCount: 0,
       taskBatches: [],
+      mergeWarnings: [],
       failedBatchCollapse: ['failed'],
       batchPreviewDialogVisible: false,
       batchPreviewItem: {},
@@ -426,10 +461,14 @@ export default {
       return this.parseForm.text ? this.parseForm.text.length : 0
     },
     fileReadyTip() {
-      if (this.parseForm.repoIds && this.parseForm.repoIds.length > 0) {
-        return '题库已选择，将自动开始提取文档并 AI 解析。'
+      const parts = ['试卷文档已就绪']
+      if (this.pendingAnswerFile) {
+        parts.push('答案文档已就绪')
+      } else {
+        parts.push('可选上传答案文档')
       }
-      return '请先选择题库，然后点击「开始AI导入」。'
+      parts.push('确认后点击「开始AI导入」')
+      return parts.join('，') + '。'
     },
     textPlaceholder() {
       if (this.taskRunning && this.importSource === 'file') {
@@ -493,15 +532,28 @@ export default {
       this.rawSourceText = ''
       this.resetTaskState(false)
 
-      const repoReady = this.parseForm.repoIds && this.parseForm.repoIds.length > 0
-      if (repoReady) {
-        this.$message.success('文件已上传，正在提取文档并 AI 解析')
-        this.$nextTick(() => {
-          this.handleStartImport()
-        })
-      } else {
-        this.$message.info('已选择文件：' + fileName + '，请先选择题库后点击「开始AI导入」')
+      const tip = this.pendingAnswerFile
+        ? '已选择试卷：' + fileName + '，可点击「开始AI导入」'
+        : '已选择试卷：' + fileName + '，可选上传答案文档后点击「开始AI导入」'
+      this.$message.success(tip)
+    },
+
+    handleAnswerFileChange(file) {
+      const rawFile = file.raw
+      if (!rawFile) {
+        return
       }
+
+      const fileName = rawFile.name || ''
+      const lowerName = fileName.toLowerCase()
+      if (!lowerName.endsWith('.docx') && !lowerName.endsWith('.txt')) {
+        this.$message.warning('答案文档只支持 docx 和 txt 文件')
+        return
+      }
+
+      this.pendingAnswerFile = rawFile
+      this.answerFileInfo = { fileName: fileName }
+      this.$message.success('已选择答案文档：' + fileName + '，确认后点击「开始AI导入」')
     },
 
     handleStartImport() {
@@ -535,6 +587,7 @@ export default {
 
         createImportTask({
           file: hasFile ? this.pendingFile : null,
+          answerFile: this.pendingAnswerFile || null,
           text: hasText ? this.parseForm.text.trim() : null,
           repoIds: this.parseForm.repoIds,
           level: this.parseForm.level,
@@ -674,6 +727,7 @@ export default {
       this.taskFailedBatchCount = data.failedBatchCount || 0
       this.taskDeepCleanBatchCount = data.deepCleanBatchCount || 0
       this.taskBatches = data.batches || []
+      this.mergeWarnings = data.mergeWarnings || []
     },
 
     handleTaskPartialCompleted(data) {
@@ -719,6 +773,7 @@ export default {
       this.taskFailedBatchCount = 0
       this.taskDeepCleanBatchCount = 0
       this.taskBatches = []
+      this.mergeWarnings = []
       this.taskHasNormalizedText = false
       if (clearLastStatus) {
         this.lastPolledStatus = ''
@@ -770,8 +825,10 @@ export default {
 
     clearSource() {
       this.pendingFile = null
+      this.pendingAnswerFile = null
       this.importSource = 'text'
       this.fileInfo = { fileName: '' }
+      this.answerFileInfo = { fileName: '' }
       this.parseForm.text = ''
       this.rawSourceText = ''
       this.rawTextDialogVisible = false
@@ -951,8 +1008,21 @@ export default {
   padding: 4px 0 14px;
 }
 
+.answer-upload {
+  margin-top: 8px;
+}
+
 .file-selected-alert {
   margin-top: 10px;
+}
+
+.merge-warning-alert {
+  margin-bottom: 12px;
+}
+
+.merge-warning-item {
+  line-height: 1.6;
+  font-size: 13px;
 }
 
 .upload-tip {

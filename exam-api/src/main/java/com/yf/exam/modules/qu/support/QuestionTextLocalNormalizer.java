@@ -5,15 +5,12 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Pattern;
 
 /**
  * 试题文本本地规则清洗（不调用 AI）
  */
 @Component
 public class QuestionTextLocalNormalizer {
-
-    private static final Pattern QUESTION_START_PATTERN = Pattern.compile("(?m)(?=^\\s*\\d+[\\.．、)\\）]\\s*)");
 
     public String normalize(String rawText) {
         if (StringUtils.isBlank(rawText)) {
@@ -27,6 +24,7 @@ public class QuestionTextLocalNormalizer {
         text = text.replace("\u00A0", " ");
         text = text.replace("\u3000", " ");
         text = text.replace("．", ".");
+        text = QuestionBoundaryHelper.separateGluedBoundaries(text);
         text = text.replaceAll("\\s+([A-Ha-h])\\s*[\\.、)\\）]\\s*", "\n$1. ");
         text = text.replaceAll("\\s+(答案|参考答案)\\s*[:：]\\s*", "\n答案：");
 
@@ -39,7 +37,7 @@ public class QuestionTextLocalNormalizer {
                 continue;
             }
 
-            if (lines.isEmpty() || isNewBlock(line)) {
+            if (lines.isEmpty() || QuestionBoundaryHelper.isNewContentLine(line)) {
                 lines.add(line);
             } else {
                 int lastIndex = lines.size() - 1;
@@ -56,19 +54,7 @@ public class QuestionTextLocalNormalizer {
     }
 
     public int countQuestionBlocks(String text) {
-        if (StringUtils.isBlank(text)) {
-            return 0;
-        }
-
-        String normalized = text.replace("\r\n", "\n").replace("\r", "\n");
-        String[] parts = QUESTION_START_PATTERN.split(normalized);
-        int count = 0;
-        for (String part : parts) {
-            if (StringUtils.isNotBlank(part)) {
-                count++;
-            }
-        }
-        return count;
+        return QuestionBoundaryHelper.splitQuestionBlocks(text).size();
     }
 
     private String normalizeLine(String line) {
@@ -81,7 +67,9 @@ public class QuestionTextLocalNormalizer {
             value = value.replaceAll("[ ]+", " ");
         }
         value = value.replaceAll("([\\u4e00-\\u9fa5])\\s+([\\u4e00-\\u9fa5])", "$1$2");
-        value = value.replaceAll("^(\\d+)\\s*[\\.、)\\）]\\s*", "$1. ");
+        if (!QuestionBoundaryHelper.isBlankSubNumberLine(value)) {
+            value = value.replaceAll("^(\\d+)\\s*[\\.、]\\s*", "$1. ");
+        }
         value = value.replaceAll("^([A-Ha-h])\\s*[\\.、)\\）]\\s*", "$1. ");
         value = value.replaceAll("^(答案|参考答案)\\s*[:：]?\\s*", "答案：");
         value = removeOptionTailIndex(value);
@@ -117,20 +105,14 @@ public class QuestionTextLocalNormalizer {
             String tailNumber = String.valueOf(i + 1);
             String prefix = letter + ". ";
             if (value.startsWith(prefix) && value.endsWith(" " + tailNumber)) {
+                String optionBody = value.substring(prefix.length(), value.length() - tailNumber.length()).trim();
+                if (StringUtils.isBlank(optionBody)) {
+                    continue;
+                }
                 return value.substring(0, value.length() - tailNumber.length()).trim();
             }
         }
         return value;
-    }
-
-    private boolean isNewBlock(String line) {
-        if (StringUtils.isBlank(line)) {
-            return false;
-        }
-        return line.matches("^\\d+\\.\\s*.*")
-                || line.matches("^[A-Ha-h]\\.\\s*.*")
-                || line.startsWith("答案：")
-                || line.startsWith("解析：");
     }
 
     private String mergeLine(String previous, String current) {

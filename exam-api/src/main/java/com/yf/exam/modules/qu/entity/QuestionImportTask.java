@@ -46,6 +46,12 @@ public class QuestionImportTask implements Serializable {
 
     private File tempFile;
 
+    private File answerTempFile;
+
+    private String answerFileName;
+
+    private List<String> mergeWarnings = new ArrayList<>();
+
     private String rawText;
 
     private String normalizedText;
