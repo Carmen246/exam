@@ -207,13 +207,20 @@ public class FillProgramBlankProcessor {
 
     private boolean containsAnswerVariant(String content, String variant) {
         String normalizedVariant = normalizeExpression(variant);
-        String[] parts = content.split("[；;|/、]");
+        String[] parts = content.split("\\s+/\\s+|[；;|、]");
         for (String part : parts) {
             if (StringUtils.equals(normalizeExpression(part), normalizedVariant)) {
                 return true;
             }
         }
         return false;
+    }
+
+    private String normalizeExpression(String text) {
+        if (StringUtils.isBlank(text)) {
+            return "";
+        }
+        return text.trim().replaceAll("\\s+", "");
     }
 
     private String extractFillMarkers(String code, List<BlankSlot> extracted) {
