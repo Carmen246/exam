@@ -67,7 +67,9 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     + "题型编码固定为：1=单选题，2=多选题，3=判断题，4=填空题，5=程序填空题，"
                     + "6=阅读程序写结果题，7=编程题，8=程序改错题，9=综合应用题。"
                     + "只能按原题型解析，不要把填空题/编程题改造成选择题。"
-                    + "如果题目有 A/B/C/D 选项，解析为单选或多选。"
+                    + "如果题目有 A/B/C/D 选项且无完整程序代码，解析为单选或多选；"
+                    + "但如果题目含完整程序代码且要求阅读程序写结果，即使有A/B/C/D选项也解析为阅读程序写结果题(6)，"
+                    + "并将A/B/C/D选项完整保留在content末尾(代码之后另起一行)。\n"
                     + "如果题目要求判断正误，解析为判断题。"
                     + "如果题目含“请填空”且无大段程序骨架，解析为填空题(4)。"
                     + "如果题目含函数/程序代码骨架且代码内部有空位，优先解析为程序填空题(5)，"
@@ -358,9 +360,30 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         return result;
     }
 
+    private static final Pattern QUESTION_NUMBER_LINE = Pattern.compile("(?m)^\\s*(\\d+)[\\.．、]\\s+");
+
     private QuestionParseRespDTO parseQuestionsBatch(QuestionParseReqDTO sourceReq, String chunk, String batchNo) {
         try {
-            return parseQuestionsWithRetry(copyParseReq(sourceReq, chunk), batchNo);
+            QuestionParseRespDTO resp = parseQuestionsWithRetry(copyParseReq(sourceReq, chunk), batchNo);
+            // Safety check: if AI returned fewer questions than the number of question-numbered
+            // lines in the input, the response was likely truncated — trigger fallback split.
+            // Count lines starting with "N." (not section headers or instruction lines).
+            int expectedQuestions = 0;
+            Matcher qMatcher = QUESTION_NUMBER_LINE.matcher(chunk);
+            while (qMatcher.find()) {
+                // Skip instruction lines like "1.应将全部答案写在答卷纸"
+                String after = chunk.substring(qMatcher.start());
+                String lineEnd = after.contains("\n") ? after.substring(0, after.indexOf("\n")) : after;
+                if (!lineEnd.contains("应将全部答案") && !lineEnd.contains("编程题应写明")
+                        && !lineEnd.contains("考试完成后") && !lineEnd.contains("不要另添")) {
+                    expectedQuestions++;
+                }
+            }
+            if (expectedQuestions > 1 && resp.getQuestions().size() < expectedQuestions) {
+                throw new ServiceException("第" + batchNo + "批AI仅解析出" + resp.getQuestions().size()
+                        + "题，但输入含" + expectedQuestions + "题，可能截断");
+            }
+            return resp;
         } catch (ServiceException e) {
             List<String> smallerChunks = splitQuestionText(chunk, FALLBACK_PARSE_BATCH_LENGTH,
                     FALLBACK_PARSE_BATCH_QUESTION_COUNT);
@@ -445,7 +468,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                             .apiKey(properties.getApiKey())
                             .modelName(properties.getModelName())
                             .temperature(0.1)
-                            .maxTokens(5000)
+                            .maxTokens(8000)
                             .responseFormat("json_object")
                             .timeout(Duration.ofSeconds(properties.getTimeoutSeconds()))
                             .maxRetries(1)
@@ -582,6 +605,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 + "   - 识别特征：给出完整程序(无空位)，要求写出运行结果/输出/程序功能分析。\n"
                 + "   - 关键词：阅读程序、写出结果、程序运行后、输出结果。\n"
                 + "   - content=题干 + \\n\\n + 完整程序代码；answerList=运行结果或参考答案(非程序代码)。\n"
+                + "   - 如果原始文本包含A/B/C/D选项，必须将选项完整保留在content末尾(程序代码之后另起一行)，"
+                + "格式如\"A. 选项内容 B. 选项内容 C. 选项内容 D. 选项内容\"，不要丢弃选项。\n"
                 + "   - 不要把完整程序放进 answerList；与 quType=5(有空位)、quType=8(改错)区分。\n"
                 + "8. 编程题 quType=7（重点）：\n"
                 + "   - 识别特征：只给题目需求/功能描述，要求学生编写完整程序，无现成代码骨架。\n"
@@ -598,7 +623,9 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 + "13. level 使用：" + (reqDTO.getLevel() == null ? 1 : reqDTO.getLevel()) + "。\n"
                 + "14. 必须生成整体解析：每道题的 analysis 不能为空。\n"
                 + "15. 客观题 answerList 中每个选项的 analysis 不能为空。\n"
-                + "16. 程序代码保留换行，JSON 中用 \\n 表示换行。\n"
+                + "16. 程序代码保留换行，JSON 中用 \\n 表示换行。必须原样保留C代码中的每一个字符，"
+                + "不得修改、替换或省略任何符号，特别是三目运算符?和:、比较运算符>=/<=/!=/==、"
+                + "逻辑运算符&&/||/!、位运算符&/|/^、指针*和->、取地址&等。\n"
                 + "17. 不要编造题目，无法识别的题目不要输出。\n"
                 + "18. 上一题选项(如D. area)与下一题题干(如下面程序的功能...)属于不同题目，不要合并。\n\n"
                 + "原始文本：\n"
