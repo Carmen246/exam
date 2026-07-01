@@ -36,7 +36,10 @@ import com.yf.exam.modules.qu.support.ImportTaskProgressListener;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -703,6 +706,10 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         }
 
         String content = StringUtils.defaultString(qu.getContent()).trim();
+
+        // Extract per-blank options (e.g. (1) A. &r  B. &area ...) BEFORE processing
+        Map<Integer, Map<String, String>> blankOptions = extractFillBlankOptions(content);
+
         List<String> aiAnswers = collectAiBlankAnswers(qu.getAnswerList());
         String programFromAnswer = null;
 
@@ -742,6 +749,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         content = programContentFormatter.mergeStemAndCode(stem, code);
 
         List<QuAnswerDTO> blankAnswers = buildBlankAnswerList(processed.getBlanks());
+        resolveFillBlankLetterAnswers(blankAnswers, blankOptions);
         appendBlankNotesToAnalysis(qu, processed.getBlanks());
 
         qu.setContent(content);
@@ -813,10 +821,80 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         }
     }
 
+    private static final Pattern FILL_BLANK_NUM = Pattern.compile("(?m)^\\s*[（(](\\d+)[)）]\\s*$");
+    private static final Pattern FILL_OPTION_LINE = Pattern.compile("^\\s*([A-D])\\s*[.、．]\\s*(.+)$");
+
+    /**
+     * Extract per-blank multiple-choice options from program-fill-blank content.
+     * Format: (1) followed by A. xxx B. xxx C. xxx D. xxx
+     * Returns map: blankNumber → (letter → optionText)
+     */
+    private Map<Integer, Map<String, String>> extractFillBlankOptions(String content) {
+        Map<Integer, Map<String, String>> result = new HashMap<>();
+        if (StringUtils.isBlank(content)) {
+            return result;
+        }
+        String[] lines = content.split("\\r?\\n");
+        int currentBlank = -1;
+        for (String line : lines) {
+            Matcher blankMatcher = FILL_BLANK_NUM.matcher(line.trim());
+            if (blankMatcher.matches()) {
+                currentBlank = Integer.parseInt(blankMatcher.group(1));
+                result.put(currentBlank, new LinkedHashMap<>());
+                continue;
+            }
+            if (currentBlank > 0 && result.containsKey(currentBlank)) {
+                Matcher optMatcher = FILL_OPTION_LINE.matcher(line.trim());
+                if (optMatcher.matches()) {
+                    result.get(currentBlank).put(optMatcher.group(1), optMatcher.group(2).trim());
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * For program-fill-blank questions: if an answer is just a letter (A/B/C/D)
+     * and we have extracted options, replace it with the actual option text.
+     */
+    private void resolveFillBlankLetterAnswers(List<QuAnswerDTO> answers,
+                                                Map<Integer, Map<String, String>> blankOptions) {
+        if (CollectionUtils.isEmpty(answers) || blankOptions.isEmpty()) {
+            return;
+        }
+        for (int i = 0; i < answers.size(); i++) {
+            QuAnswerDTO answer = answers.get(i);
+            if (answer == null || StringUtils.isBlank(answer.getContent())) {
+                continue;
+            }
+            String text = answer.getContent().trim();
+            if (text.length() == 1 && Character.isLetter(text.charAt(0))) {
+                String letter = text.toUpperCase();
+                int blankNum = i + 1;
+                Map<String, String> opts = blankOptions.get(blankNum);
+                if (opts != null && opts.containsKey(letter)) {
+                    answer.setContent(opts.get(letter));
+                }
+            }
+        }
+    }
+
     /**
      * 阅读程序题：content 存题干+完整程序，answerList 只存运行结果
      */
+    private static final Pattern LOOSE_CODE_PATTERN = Pattern.compile(
+            "(int|void)\\s+main\\s*\\(|#include\\s*<|printf\\s*\\(|scanf\\s*\\(|return\\s+0"
+    );
+
     private void normalizeProgramChoiceQuestion(QuDetailDTO qu) {
+        boolean wasRadio = QuType.RADIO.equals(qu.getQuType());
+        // Handle type 1 (RADIO) questions that contain code — they should be type 6
+        if (wasRadio) {
+            String c = StringUtils.defaultString(qu.getContent());
+            if (containsCodeBlock(c) || LOOSE_CODE_PATTERN.matcher(c).find()) {
+                qu.setQuType(QuType.READ_PROGRAM);
+            }
+        }
         if (!QuType.READ_PROGRAM.equals(qu.getQuType())) {
             return;
         }
@@ -824,32 +902,37 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             return;
         }
 
+        // Case 1: Options still embedded in content — extract them
         ProgramChoiceOptions options = extractProgramChoiceOptions(qu.getContent());
-        if (options == null || options.answers.size() < 4) {
-            return;
+        if (options != null && options.answers.size() >= 4) {
+            String expectedAnswer = firstRightAnswerContent(qu.getAnswerList());
+            int rightIndex = findMatchingOptionIndex(options.answers, expectedAnswer);
+            if (rightIndex >= 0) {
+                List<QuAnswerDTO> answerList = new ArrayList<>();
+                for (int i = 0; i < options.answers.size(); i++) {
+                    QuAnswerDTO answer = new QuAnswerDTO();
+                    answer.setContent(options.answers.get(i));
+                    answer.setIsRight(i == rightIndex);
+                    answer.setImage("");
+                    answer.setAnalysis("");
+                    answerList.add(answer);
+                }
+                ProgramContentFormatter.StemCodeParts parts =
+                        programContentFormatter.splitStemAndCode(options.stemCode);
+                String content = programContentFormatter.mergeStemAndCode(parts.getStem(), parts.getCode());
+                qu.setContent(content);
+                qu.setAnswerList(answerList);
+                return;
+            }
         }
 
-        String expectedAnswer = firstRightAnswerContent(qu.getAnswerList());
-        int rightIndex = findMatchingOptionIndex(options.answers, expectedAnswer);
-        if (rightIndex < 0) {
-            return;
+        // Case 2: AI already extracted options to answerList — just clean content
+        if (wasRadio && qu.getAnswerList() != null && qu.getAnswerList().size() >= 3) {
+            ProgramContentFormatter.StemCodeParts parts =
+                    programContentFormatter.splitStemAndCode(qu.getContent());
+            String content = programContentFormatter.mergeStemAndCode(parts.getStem(), parts.getCode());
+            qu.setContent(content);
         }
-
-        List<QuAnswerDTO> answerList = new ArrayList<>();
-        for (int i = 0; i < options.answers.size(); i++) {
-            QuAnswerDTO answer = new QuAnswerDTO();
-            answer.setContent(options.answers.get(i));
-            answer.setIsRight(i == rightIndex);
-            answer.setImage("");
-            answer.setAnalysis("");
-            answerList.add(answer);
-        }
-
-        ProgramContentFormatter.StemCodeParts parts = programContentFormatter.splitStemAndCode(options.stemCode);
-        String content = programContentFormatter.mergeStemAndCode(parts.getStem(), parts.getCode());
-        qu.setQuType(QuType.RADIO);
-        qu.setContent(content);
-        qu.setAnswerList(answerList);
     }
 
     private ProgramChoiceOptions extractProgramChoiceOptions(String content) {
@@ -933,6 +1016,14 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     private void normalizeReadProgramQuestion(QuDetailDTO qu) {
         if (!QuType.READ_PROGRAM.equals(qu.getQuType())) {
             return;
+        }
+        // Skip if normalizeProgramChoiceQuestion already set up A/B/C/D choices
+        if (qu.getAnswerList() != null && qu.getAnswerList().size() == 4) {
+            long rightCount = qu.getAnswerList().stream()
+                    .filter(a -> a != null && Boolean.TRUE.equals(a.getIsRight())).count();
+            if (rightCount == 1) {
+                return; // already normalized with proper choice structure
+            }
         }
 
         String content = StringUtils.defaultString(qu.getContent()).trim();
