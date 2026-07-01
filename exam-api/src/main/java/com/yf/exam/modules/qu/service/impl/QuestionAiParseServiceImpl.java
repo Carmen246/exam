@@ -70,8 +70,15 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     + "题型编码固定为：1=单选题，2=多选题，3=判断题，4=填空题，5=程序填空题，"
                     + "6=阅读程序写结果题，7=编程题，8=程序改错题，9=综合应用题。"
                     + "只能按原题型解析，不要把填空题/编程题改造成选择题。"
-                    + "如果题目有 A/B/C/D 选项且无完整程序代码，解析为单选或多选；"
-                    + "但如果题目含完整程序代码且要求阅读程序写结果，即使有A/B/C/D选项也解析为阅读程序写结果题(6)，"
+                    + "\n【最重要的规则】题型完全由题目所在的大题标题(section header)决定！"
+                    + "大题标题如\"判断题(本大题共...)\"、\"单选题(本大题共...)\"、\"程序填空题(本大题共...)\"、"
+                    + "\"程序阅读题(本大题共...)\"、\"编程题(本大题共...)\"等。"
+                    + "单选题部分的题即使含完整程序代码也必须解析为单选题(1)；"
+                    + "程序阅读题部分的题即使有A/B/C/D选项也必须解析为阅读程序写结果题(6)，"
+                    + "并将A/B/C/D选项完整保留在content末尾(代码之后另起一行)。"
+                    + "绝对禁止把单选题部分的题解析为阅读程序写结果题！\n"
+                    + "如果题目有 A/B/C/D 选项且在单选题部分，解析为单选(1)；"
+                    + "如果题目在程序阅读题/阅读程序部分，即使有A/B/C/D选项也解析为阅读程序写结果题(6)，"
                     + "并将A/B/C/D选项完整保留在content末尾(代码之后另起一行)。\n"
                     + "如果题目要求判断正误，解析为判断题。"
                     + "如果题目含“请填空”且无大段程序骨架，解析为填空题(4)。"
@@ -90,7 +97,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     + "answerList=每个空的参考答案(按出现顺序)，不要把完整程序放进 answerList。"
                     + "程序填空选择题：代码后的(3)(4)(5)是空位编号不是题号，其后A/B/C/D是该空候选项不是新题；"
                     + "仍按程序填空题解析，answerList只存各空正确答案，候选项可不写入answerList。"
-                    + "阅读程序写结果题(6)：content=题干+完整程序(无空位)，answerList=运行结果。"
+                    + "阅读程序写结果题(6)：content=题干+完整程序(无空位)+A/B/C/D选项(如有，放在代码之后)，answerList=运行结果。"
                     + "编程题(7)：content=仅题干，answerList[0]=完整参考程序，禁止把程序写进 content。"
                     + "程序改错题(8)：content=题干+有错程序，answerList=改正后程序；关键词“改错/改正/错误”。"
                     + "程序代码必须保留换行与缩进，JSON 中用 \\n 表示换行。"
@@ -504,15 +511,36 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         return Math.min(configured, defaultValue);
     }
 
+    /** 匹配大题标题行，如"二、单选题（本大题共20小题，每小题1分，共20分）" */
+    private static final Pattern SECTION_HEADER_LINE = Pattern.compile(
+            "(?m)^\\s*(?:得分\\s*)?(?:[一二三四五六七八九十]+、)?\\s*"
+                    + "(?:判断题|单选题|多选题|填空题|程序填空题|程序阅读题|阅读程序写结果题|"
+                    + "程序设计题|编程题|程序改错题|综合应用题)[^\\n]*本大题共[^\\n]*");
+
     private List<String> splitQuestionText(String text, int maxLength, int maxQuestionCount) {
         List<String> blocks = splitQuestionBlocks(text);
         if (blocks.size() <= 1) {
             return splitByLength(text, maxLength);
         }
 
+        // Extract section headers with their positions from the original text,
+        // so we can propagate them into each new chunk for AI context.
+        String normalized = text.replace("\r\n", "\n").replace("\r", "\n");
+        List<String> sectionHeaders = new ArrayList<>();
+        List<Integer> sectionPositions = new ArrayList<>();
+        Matcher hm = SECTION_HEADER_LINE.matcher(normalized);
+        while (hm.find()) {
+            String header = hm.group().trim().replaceFirst("^(?:得分\\s*)", "");
+            sectionHeaders.add(header);
+            sectionPositions.add(hm.start());
+        }
+
         List<String> chunks = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         int questionCount = 0;
+        String currentSectionHeader = "";
+        String chunkSectionHeader = "";
+        int nextSectionIdx = 0;
 
         for (String block : blocks) {
             if (StringUtils.isBlank(block)) {
@@ -520,12 +548,45 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             }
 
             String value = block.trim();
+
+            // If this block IS a section header (not filtered by splitQuestionBlocks),
+            // capture it and skip — don't treat it as a question.
+            if (SECTION_HEADER_LINE.matcher(value).find() && value.length() < 100
+                    && !value.matches("(?s).*\\d+[\\.．、]\\s*.*")) {
+                currentSectionHeader = value.replaceFirst("^(?:得分\\s*)", "");
+                continue;
+            }
+
+            // Determine which section this block belongs to by finding its
+            // approximate position in the original text and comparing with
+            // section header positions.
+            if (!sectionHeaders.isEmpty() && nextSectionIdx < sectionHeaders.size()) {
+                int blockPos = findBlockPosition(normalized, value);
+                if (blockPos >= 0) {
+                    while (nextSectionIdx < sectionPositions.size()
+                            && blockPos >= sectionPositions.get(nextSectionIdx)) {
+                        currentSectionHeader = sectionHeaders.get(nextSectionIdx);
+                        nextSectionIdx++;
+                    }
+                }
+            }
+
+            // Flush when section boundary changes to avoid mixing question types
+            boolean sectionChanged = current.length() > 0 && questionCount > 0
+                    && !currentSectionHeader.equals(chunkSectionHeader);
             boolean shouldFlush = current.length() > 0
-                    && (current.length() + value.length() + 2 > maxLength || questionCount >= maxQuestionCount);
+                    && (sectionChanged
+                        || current.length() + value.length() + 2 > maxLength
+                        || questionCount >= maxQuestionCount);
             if (shouldFlush) {
                 chunks.add(current.toString().trim());
                 current.setLength(0);
                 questionCount = 0;
+                // Prepend section header to new chunk so AI knows the question type context
+                chunkSectionHeader = currentSectionHeader;
+                if (!chunkSectionHeader.isEmpty()) {
+                    current.append(chunkSectionHeader).append("\n\n");
+                }
             }
 
             if (value.length() > maxLength) {
@@ -549,6 +610,21 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             chunks.add(current.toString().trim());
         }
         return chunks;
+    }
+
+    /**
+     * Find the approximate position of a block in the original text.
+     * Uses progressively shorter prefixes for robustness.
+     */
+    private int findBlockPosition(String text, String block) {
+        for (int len = Math.min(block.length(), 60); len >= 15; len -= 10) {
+            String key = block.substring(0, len);
+            int pos = text.indexOf(key);
+            if (pos >= 0) {
+                return pos;
+            }
+        }
+        return -1;
     }
 
     private List<String> splitQuestionBlocks(String text) {
@@ -882,19 +958,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     /**
      * 阅读程序题：content 存题干+完整程序，answerList 只存运行结果
      */
-    private static final Pattern LOOSE_CODE_PATTERN = Pattern.compile(
-            "(int|void)\\s+main\\s*\\(|#include\\s*<|printf\\s*\\(|scanf\\s*\\(|return\\s+0"
-    );
-
     private void normalizeProgramChoiceQuestion(QuDetailDTO qu) {
-        boolean wasRadio = QuType.RADIO.equals(qu.getQuType());
-        // Handle type 1 (RADIO) questions that contain code — they should be type 6
-        if (wasRadio) {
-            String c = StringUtils.defaultString(qu.getContent());
-            if (containsCodeBlock(c) || LOOSE_CODE_PATTERN.matcher(c).find()) {
-                qu.setQuType(QuType.READ_PROGRAM);
-            }
-        }
         if (!QuType.READ_PROGRAM.equals(qu.getQuType())) {
             return;
         }
@@ -902,37 +966,31 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             return;
         }
 
-        // Case 1: Options still embedded in content — extract them
         ProgramChoiceOptions options = extractProgramChoiceOptions(qu.getContent());
-        if (options != null && options.answers.size() >= 4) {
-            String expectedAnswer = firstRightAnswerContent(qu.getAnswerList());
-            int rightIndex = findMatchingOptionIndex(options.answers, expectedAnswer);
-            if (rightIndex >= 0) {
-                List<QuAnswerDTO> answerList = new ArrayList<>();
-                for (int i = 0; i < options.answers.size(); i++) {
-                    QuAnswerDTO answer = new QuAnswerDTO();
-                    answer.setContent(options.answers.get(i));
-                    answer.setIsRight(i == rightIndex);
-                    answer.setImage("");
-                    answer.setAnalysis("");
-                    answerList.add(answer);
-                }
-                ProgramContentFormatter.StemCodeParts parts =
-                        programContentFormatter.splitStemAndCode(options.stemCode);
-                String content = programContentFormatter.mergeStemAndCode(parts.getStem(), parts.getCode());
-                qu.setContent(content);
-                qu.setAnswerList(answerList);
-                return;
-            }
+        if (options == null || options.answers.size() < 4) {
+            return;
         }
 
-        // Case 2: AI already extracted options to answerList — just clean content
-        if (wasRadio && qu.getAnswerList() != null && qu.getAnswerList().size() >= 3) {
-            ProgramContentFormatter.StemCodeParts parts =
-                    programContentFormatter.splitStemAndCode(qu.getContent());
-            String content = programContentFormatter.mergeStemAndCode(parts.getStem(), parts.getCode());
-            qu.setContent(content);
+        String expectedAnswer = firstRightAnswerContent(qu.getAnswerList());
+        int rightIndex = findMatchingOptionIndex(options.answers, expectedAnswer);
+        if (rightIndex < 0) {
+            return;
         }
+
+        List<QuAnswerDTO> answerList = new ArrayList<>();
+        for (int i = 0; i < options.answers.size(); i++) {
+            QuAnswerDTO answer = new QuAnswerDTO();
+            answer.setContent(options.answers.get(i));
+            answer.setIsRight(i == rightIndex);
+            answer.setImage("");
+            answer.setAnalysis("");
+            answerList.add(answer);
+        }
+
+        ProgramContentFormatter.StemCodeParts parts = programContentFormatter.splitStemAndCode(options.stemCode);
+        String content = programContentFormatter.mergeStemAndCode(parts.getStem(), parts.getCode());
+        qu.setContent(content);
+        qu.setAnswerList(answerList);
     }
 
     private ProgramChoiceOptions extractProgramChoiceOptions(String content) {
