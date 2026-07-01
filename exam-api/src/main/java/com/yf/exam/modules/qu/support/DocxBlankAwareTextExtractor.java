@@ -14,7 +14,10 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.math.BigInteger;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 从 docx 提取文本，优先识别下划线/高亮 run 作为程序填空答案
@@ -28,11 +31,34 @@ public class DocxBlankAwareTextExtractor {
     public String extract(InputStream inputStream) throws IOException {
         try (XWPFDocument document = new XWPFDocument(inputStream)) {
             StringBuilder sb = new StringBuilder();
+            Map<String, Integer> numberingCounters = new HashMap<>();
+            boolean seenExamHeader = false;
+            
             for (IBodyElement element : document.getBodyElements()) {
                 if (element instanceof XWPFParagraph) {
-                    appendParagraph(sb, (XWPFParagraph) element);
+                    XWPFParagraph para = (XWPFParagraph) element;
+                    String text = getParagraphText(para);
+                    
+                    // 检测试卷头部特征：同一段落中同时包含"考试科目"和"考试类型"
+                    if (text.contains("考试科目") && text.contains("考试类型")) {
+                        if (seenExamHeader) {
+                            // 第二次出现，说明进入了答题纸模板部分，停止提取
+                            break;
+                        }
+                        seenExamHeader = true;
+                    } else if (seenExamHeader && text.contains("专业班级") && text.contains("学号")) {
+                        // 已见过试卷头部后，再次出现"专业班级"+"学号"，
+                        // 说明进入了答题纸模板的封面区域，停止提取
+                        break;
+                    } else if (seenExamHeader && text.contains("浙江科技学院")) {
+                        // 已见过试卷头部后，再次出现"浙江科技学院"，
+                        // 说明进入了答题纸模板的封面区域，停止提取
+                        break;
+                    }
+                    
+                    appendParagraph(sb, para, numberingCounters);
                 } else if (element instanceof XWPFTable) {
-                    appendTable(sb, (XWPFTable) element);
+                    appendTable(sb, (XWPFTable) element, numberingCounters);
                 }
             }
             String text = sb.toString();
@@ -40,29 +66,81 @@ public class DocxBlankAwareTextExtractor {
         }
     }
 
-    private void appendTable(StringBuilder sb, XWPFTable table) {
+    private String getParagraphText(XWPFParagraph paragraph) {
+        StringBuilder sb = new StringBuilder();
+        if (paragraph.getRuns() != null) {
+            for (XWPFRun run : paragraph.getRuns()) {
+                String t = run.getText(0);
+                if (t != null) {
+                    sb.append(t);
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    private void appendTable(StringBuilder sb, XWPFTable table, Map<String, Integer> numberingCounters) {
         for (XWPFTableRow row : table.getRows()) {
             for (XWPFTableCell cell : row.getTableCells()) {
                 for (XWPFParagraph paragraph : cell.getParagraphs()) {
-                    appendParagraph(sb, paragraph);
+                    appendParagraph(sb, paragraph, numberingCounters);
                 }
             }
         }
     }
 
-    private void appendParagraph(StringBuilder sb, XWPFParagraph paragraph) {
+    private void appendParagraph(StringBuilder sb, XWPFParagraph paragraph, Map<String, Integer> numberingCounters) {
         List<XWPFRun> runs = paragraph.getRuns();
         if (runs == null || runs.isEmpty()) {
             sb.append("\n");
             return;
         }
 
+        StringBuilder paragraphText = new StringBuilder();
         StringBuilder fillBuffer = new StringBuilder();
         for (XWPFRun run : runs) {
-            appendRun(sb, fillBuffer, run);
+            appendRun(paragraphText, fillBuffer, run);
         }
-        flushFillBuffer(sb, fillBuffer);
+        flushFillBuffer(paragraphText, fillBuffer);
+        appendListNumberIfNeeded(sb, paragraph, paragraphText.toString(), numberingCounters);
+        sb.append(paragraphText);
         sb.append("\n");
+    }
+
+    private void appendListNumberIfNeeded(StringBuilder sb, XWPFParagraph paragraph, String text,
+                                          Map<String, Integer> numberingCounters) {
+        if (StringUtils.isBlank(text)) {
+            return;
+        }
+
+        BigInteger numId = paragraph.getNumID();
+        if (numId == null || shouldKeepParagraphUnnumbered(text)) {
+            return;
+        }
+
+        // POI 5.2.5 的 XWPFParagraph 没有暴露 getNumIlv() 方法，通过 CT API 访问编号层级
+        BigInteger ilvl = null;
+        if (paragraph.getCTP().isSetPPr()
+                && paragraph.getCTP().getPPr().isSetNumPr()
+                && paragraph.getCTP().getPPr().getNumPr().isSetIlvl()) {
+            ilvl = paragraph.getCTP().getPPr().getNumPr().getIlvl().getVal();
+        }
+        String key = numId.toString() + ":" + (ilvl == null ? "0" : ilvl.toString());
+        Integer next = numberingCounters.get(key);
+        next = next == null ? 1 : next + 1;
+        numberingCounters.put(key, next);
+        sb.append(next).append(". ");
+    }
+
+    private boolean shouldKeepParagraphUnnumbered(String text) {
+        String value = text.trim();
+        return value.matches("^\\d+[\\.．、].*")
+                || value.matches("^[（(]\\s*\\d+\\s*[）)].*")
+                || value.matches("^[A-Ha-h][\\.、)）].*")
+                || value.matches("^([一二三四五六七八九十]+、)?(判断题|单选题|多选题|程序填空题|程序阅读题|程序设计题).*本大题共.*")
+                || value.matches("^(得分|题序|签名|考试科目|考试类型|考试方式|完成时限|拟题人|审核人|批准人).*")
+                || value.matches("^(应将全部答案写在答卷纸|编程题应写明题号|考试完成后|不要另添卷纸|否则作无效处理|写在背面).*")
+                || value.matches("^(命题|说明)[：:].*");
     }
 
     private void appendRun(StringBuilder sb, StringBuilder fillBuffer, XWPFRun run) {

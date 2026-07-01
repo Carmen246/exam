@@ -13,6 +13,9 @@ public interface QuestionDocumentParseService {
     /** 提取原始文本（不做本地规则清洗） */
     String extractRawText(File file);
 
+    /** 提取答案文档文本（优先解析表格格式的√答案网格，失败时回退到普通文本提取） */
+    String extractAnswerText(File file);
+
     /** 本地规则清洗（不调用 AI） */
     String normalizeLocally(String text);
 

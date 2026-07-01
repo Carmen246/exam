@@ -3,6 +3,7 @@ package com.yf.exam.modules.qu.service.impl;
 import com.yf.exam.core.exception.ServiceException;
 import com.yf.exam.modules.qu.service.QuestionDocumentParseService;
 import com.yf.exam.modules.qu.support.DocxBlankAwareTextExtractor;
+import com.yf.exam.modules.qu.support.AnswerDocumentTableParser;
 import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
 import com.yf.exam.modules.qu.support.QuestionTextLocalNormalizer;
 import org.apache.commons.io.FilenameUtils;
@@ -52,6 +53,25 @@ public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseSe
             throw new ServiceException("上传文件不能为空！");
         }
         return readFileContent(file.getName(), () -> new FileInputStream(file), () -> Files.readAllBytes(file.toPath()));
+    }
+
+    @Override
+    public String extractAnswerText(File file) {
+        if (file == null || !file.exists() || !file.isFile()) {
+            throw new ServiceException("上传文件不能为空！");
+        }
+        String ext = FilenameUtils.getExtension(file.getName());
+        if ("docx".equalsIgnoreCase(ext)) {
+            try {
+                String tableResult = AnswerDocumentTableParser.parse(new FileInputStream(file));
+                if (StringUtils.isNotBlank(tableResult)) {
+                    return tableResult;
+                }
+            } catch (Exception e) {
+                // 表格解析失败，回退到普通文本提取
+            }
+        }
+        return extractRawText(file);
     }
 
     @Override

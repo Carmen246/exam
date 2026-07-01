@@ -19,6 +19,7 @@ import com.yf.exam.modules.qu.service.QuestionDocumentParseService;
 import com.yf.exam.modules.qu.service.QuestionImportTaskService;
 import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
 import com.yf.exam.modules.qu.support.QuestionAnswerDocumentMerger;
+import com.yf.exam.modules.qu.support.QuestionBoundaryHelper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -219,9 +220,12 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
             throw new ServiceException("未提取到有效试题文本");
         }
 
+        // 将各题型分区编号（每题型从1开始）转换为全局连续编号，与答案文档编号对齐
+        questionText = QuestionBoundaryHelper.renumberContinuous(questionText);
+
         String mergedText = questionText.trim();
         if (task.getAnswerTempFile() != null) {
-            String answerText = documentParseService.extractRawText(task.getAnswerTempFile());
+            String answerText = documentParseService.extractAnswerText(task.getAnswerTempFile());
             AnswerDocumentMergeResultDTO mergeResult = answerDocumentMerger.merge(mergedText, answerText);
             mergedText = mergeResult.getMergedText();
             if (!CollectionUtils.isEmpty(mergeResult.getWarnings())) {
