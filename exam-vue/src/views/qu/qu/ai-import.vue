@@ -110,17 +110,17 @@
                 action=""
                 :auto-upload="false"
                 :show-file-list="false"
-                accept=".docx,.txt"
+                accept=".docx,.txt,.xls,.xlsx"
                 :disabled="taskRunning"
                 :on-change="handleFileChange"
               >
-                <el-button icon="el-icon-upload2" type="primary" plain :loading="fileLoading" :disabled="taskRunning">选择试卷文档(docx/txt)</el-button>
+                <el-button icon="el-icon-upload2" type="primary" plain :loading="fileLoading" :disabled="taskRunning">选择试卷文档(docx/txt/xls/xlsx)</el-button>
               </el-upload>
               <el-upload
                 action=""
                 :auto-upload="false"
                 :show-file-list="false"
-                accept=".docx,.txt"
+                accept=".docx,.txt,.xls,.xlsx"
                 :disabled="taskRunning"
                 :on-change="handleAnswerFileChange"
                 class="answer-upload"
@@ -431,6 +431,7 @@ export default {
       batchPreviewItem: {},
       lastPolledStatus: '',
       taskHasNormalizedText: false,
+      taskErrorMessage: '',
       retryLoading: false,
       pollTimer: null,
       rules: {
@@ -460,6 +461,9 @@ export default {
       return this.parseForm.text ? this.parseForm.text.length : 0
     },
     fileReadyTip() {
+      if (this.isExcelFile(this.fileInfo.fileName)) {
+        return 'Excel 文件已就绪，将直接解析结构化数据，确认后点击「开始AI导入」。'
+      }
       const parts = ['试卷文档已就绪']
       if (this.pendingAnswerFile) {
         parts.push('答案文档已就绪')
@@ -479,6 +483,12 @@ export default {
       if (!this.taskFailed && !this.taskPartialCompleted) {
         return ''
       }
+      if (this.taskErrorMessage) {
+        return this.taskErrorMessage
+      }
+      if (this.isExcelFile(this.fileInfo.fileName)) {
+        return 'Excel 解析失败，请检查表头格式后重新上传'
+      }
       if (!this.rawSourceText || !this.rawSourceText.trim()) {
         return '文档未提取成功，请重新上传文件'
       }
@@ -488,6 +498,9 @@ export default {
       return '点击重试任务'
     },
     canRetryTask() {
+      if (this.isExcelFile(this.fileInfo.fileName)) {
+        return false
+      }
       if (!this.rawSourceText || !this.rawSourceText.trim()) {
         return false
       }
@@ -510,6 +523,10 @@ export default {
     this.stopPolling()
   },
   methods: {
+    isExcelFile(fileName) {
+      const lowerName = (fileName || '').toLowerCase()
+      return lowerName.endsWith('.xls') || lowerName.endsWith('.xlsx')
+    },
     handleFileChange(file) {
       const rawFile = file.raw
       if (!rawFile) {
@@ -518,8 +535,9 @@ export default {
 
       const fileName = rawFile.name || ''
       const lowerName = fileName.toLowerCase()
-      if (!lowerName.endsWith('.docx') && !lowerName.endsWith('.txt')) {
-        this.$message.warning('只支持docx和txt文件')
+      if (!lowerName.endsWith('.docx') && !lowerName.endsWith('.txt')
+          && !lowerName.endsWith('.xls') && !lowerName.endsWith('.xlsx')) {
+        this.$message.warning('只支持 docx、txt、xls、xlsx 文件')
         return
       }
 
@@ -531,9 +549,12 @@ export default {
       this.rawSourceText = ''
       this.resetTaskState(false)
 
-      const tip = this.pendingAnswerFile
-        ? '已选择试卷：' + fileName + '，可点击「开始AI导入」'
-        : '已选择试卷：' + fileName + '，可选上传答案文档后点击「开始AI导入」'
+      const isExcel = lowerName.endsWith('.xls') || lowerName.endsWith('.xlsx')
+      const tip = isExcel
+        ? '已选择 Excel：' + fileName + '，将直接解析结构化数据，可点击「开始AI导入」'
+        : (this.pendingAnswerFile
+          ? '已选择试卷：' + fileName + '，可点击「开始AI导入」'
+          : '已选择试卷：' + fileName + '，可选上传答案文档后点击「开始AI导入」')
       this.$message.success(tip)
     },
 
@@ -697,10 +718,10 @@ export default {
 
       if (this.importSource === 'file') {
         const fileStageTips = {
-          EXTRACTING: '正在提取文档文本...',
+          EXTRACTING: this.isExcelFile(this.fileInfo.fileName) ? '正在解析 Excel 文件...' : '正在提取文档文本...',
           NORMALIZING: '文档解析完成，正在 AI 清洗文本',
           PARSING: 'AI 清洗完成，正在解析试题',
-          COMPLETED: 'AI 解析完成，请确认试题内容'
+          COMPLETED: this.isExcelFile(this.fileInfo.fileName) ? 'Excel 解析完成，请确认试题内容' : 'AI 解析完成，请确认试题内容'
         }
         if (fileStageTips[status] && status !== 'COMPLETED') {
           this.$message.info(fileStageTips[status])
@@ -721,6 +742,7 @@ export default {
       this.taskProgress = data.progress || 0
       this.taskStatusLabel = data.statusLabel || ''
       this.taskMessage = data.message || data.statusLabel || ''
+      this.taskErrorMessage = data.errorMessage || ''
       this.taskTotalBatches = data.totalBatches || 0
       this.taskCompletedBatches = data.completedBatches || 0
       this.taskFailedBatchCount = data.failedBatchCount || 0
@@ -750,7 +772,10 @@ export default {
       }
 
       if (this.importSource === 'file') {
-        this.$message.success('文档解析完成，共识别 ' + this.questions.length + ' 题，请确认后入库')
+        const isExcel = this.isExcelFile(this.fileInfo.fileName)
+        this.$message.success(isExcel
+          ? 'Excel 解析完成，共识别 ' + this.questions.length + ' 题，请确认后入库'
+          : '文档解析完成，共识别 ' + this.questions.length + ' 题，请确认后入库')
       } else {
         this.$message.success('AI 解析完成，请确认试题内容')
       }
@@ -772,6 +797,7 @@ export default {
       this.taskDeepCleanBatchCount = 0
       this.taskBatches = []
       this.taskHasNormalizedText = false
+      this.taskErrorMessage = ''
       if (clearLastStatus) {
         this.lastPolledStatus = ''
       }

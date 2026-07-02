@@ -20,6 +20,7 @@ import com.yf.exam.modules.qu.service.QuestionImportTaskService;
 import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
 import com.yf.exam.modules.qu.support.QuestionAnswerDocumentMerger;
 import com.yf.exam.modules.qu.support.QuestionBoundaryHelper;
+import com.yf.exam.modules.qu.support.QuestionExcelImportParser;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -68,6 +69,9 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
 
     @Autowired
     private QuestionAnswerDocumentMerger answerDocumentMerger;
+
+    @Autowired
+    private QuestionExcelImportParser questionExcelImportParser;
 
     @Autowired
     @Qualifier("asyncExecutor")
@@ -137,8 +141,12 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
         }
 
         try {
-            extractText(task);
-            runBatchPipeline(task, false, null);
+            if (isExcelTask(task)) {
+                processExcelTask(task);
+            } else {
+                extractText(task);
+                runBatchPipeline(task, false, null);
+            }
         } catch (Exception e) {
             failTask(task, e);
         } finally {
@@ -204,6 +212,34 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
             return QuestionImportMode.DEEP;
         }
         return QuestionImportMode.from(importMode);
+    }
+
+    private boolean isExcelTask(QuestionImportTask task) {
+        return task.getTempFile() != null && questionExcelImportParser.isExcelFile(task.getFileName());
+    }
+
+    private void processExcelTask(QuestionImportTask task) {
+        updateTask(task, QuestionImportTaskStatus.EXTRACTING, PROGRESS_EXTRACTING, "正在解析 Excel 文件");
+
+        List<QuDetailDTO> questions = questionExcelImportParser.parse(task.getTempFile());
+        if (CollectionUtils.isEmpty(questions)) {
+            throw new ServiceException("Excel 中未解析到有效试题");
+        }
+
+        Integer level = task.getLevel() == null ? 1 : task.getLevel();
+        for (QuDetailDTO qu : questions) {
+            qu.setRepoIds(new ArrayList<>(task.getRepoIds()));
+            qu.setLevel(level);
+        }
+
+        task.setQuestions(questions);
+        task.setRawText(questionExcelImportParser.buildPreviewText(questions, task.getFileName()));
+        task.setNormalizedText(task.getRawText());
+        task.setTotalBatches(1);
+        task.setCompletedBatches(1);
+        task.setFailedBatchCount(0);
+        task.setDeepCleanBatchCount(0);
+        finishTask(task);
     }
 
     private void extractText(QuestionImportTask task) {

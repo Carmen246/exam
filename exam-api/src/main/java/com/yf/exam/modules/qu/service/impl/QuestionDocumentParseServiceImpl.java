@@ -101,6 +101,9 @@ public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseSe
             if ("txt".equalsIgnoreCase(ext)) {
                 return new String(bytesSupplier.get(), StandardCharsets.UTF_8);
             }
+            if ("xls".equalsIgnoreCase(ext) || "xlsx".equalsIgnoreCase(ext)) {
+                throw new ServiceException("Excel 文件请通过 AI 导入页面上传，系统将直接解析结构化数据");
+            }
             throw new ServiceException("暂只支持 docx、txt 文件！");
         } catch (ServiceException e) {
             throw e;
