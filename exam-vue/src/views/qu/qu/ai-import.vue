@@ -252,7 +252,7 @@
                   <el-button type="text" class="danger-link" :disabled="taskRunning" @click="removeQuestion(index)">删除</el-button>
                 </div>
 
-                <div v-if="isObjectiveQuType(item.quType)" class="answer-list">
+                <div v-if="isObjectiveQuType(item.quType) || isReadProgramChoiceDisplay(item.quType, item.answerList)" class="answer-list">
                   <div
                     v-for="(answer, answerIndex) in item.answerList"
                     :key="answerIndex"
@@ -293,7 +293,7 @@
                   </div>
                 </div>
 
-                <div v-else-if="item.answerList && item.answerList.length" class="reference-block">
+                <div v-else-if="item.answerList && item.answerList.length && !isReadProgramChoiceDisplay(item.quType, item.answerList)" class="reference-block">
                   <div class="answer-section-title">{{ subjectiveAnswerLabel(item.quType) }}</div>
                   <div
                     v-for="(answer, answerIndex) in item.answerList"
@@ -373,7 +373,7 @@
 import RepoSelect from '@/components/RepoSelect'
 import FormattedText from '@/components/FormattedText'
 import { createImportTask, getImportTaskStatus, retryImportTask, confirmQuestionImport, TASK_POLL_INTERVAL } from '@/api/qu/qu'
-import { quTypeFilter, isObjectiveQuType, isFillQuType, isFillProgramQuType, isNormalFillQuType, isSubjectiveQuType, isStemCodeQuType, isProgramQuType } from '@/filters'
+import { quTypeFilter, isObjectiveQuType, isFillQuType, isFillProgramQuType, isNormalFillQuType, isSubjectiveQuType, isStemCodeQuType, isProgramQuType, isReadProgramChoiceDisplay } from '@/filters'
 import {
   needsCodeFormatForStem,
   needsCodeFormatForAnswer,
@@ -867,6 +867,7 @@ export default {
     isSubjectiveQuType,
     isStemCodeQuType,
     isProgramQuType,
+    isReadProgramChoiceDisplay,
     needsCodeFormatForStem,
     needsCodeFormatForAnswer,
     subjectiveAnswerLabel,

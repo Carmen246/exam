@@ -109,6 +109,18 @@ export function isReadProgramQuType(type) {
   return type === 6
 }
 
+/**
+ * 阅读程序写结果题是否带 A/B/C/D 选项（展示方式与单选题一致）
+ * @param {number} quType
+ * @param {Array} answerList
+ */
+export function isReadProgramChoiceDisplay(quType, answerList) {
+  if (quType !== 6 || !answerList || answerList.length < 2) {
+    return false
+  }
+  return answerList.every(item => item && item.content && !looksLikeCode(item.content))
+}
+
 export function isProgramQuType(type) {
   return type === 7
 }

@@ -57,8 +57,8 @@
 
       </el-card>
 
-      <!-- 客观题：选项编辑器 -->
-      <div v-if="isObjectiveType" class="filter-container" style="margin-top: 25px">
+      <!-- 客观题 / 阅读程序选择题：选项编辑器 -->
+      <div v-if="isObjectiveType || isReadProgramChoiceType" class="filter-container" style="margin-top: 25px">
 
         <el-button class="filter-item" type="primary" icon="el-icon-plus" size="small" plain @click="handleAdd">
           添加
@@ -213,7 +213,7 @@
         </template>
 
         <!-- 阅读程序 / 程序改错：单条参考答案 -->
-        <el-form-item v-else :label="referenceLabel">
+        <el-form-item v-else-if="!isReadProgramChoiceType" :label="referenceLabel">
           <el-input
             v-model="referenceText"
             type="textarea"
@@ -254,7 +254,7 @@
 import { fetchDetail, saveData } from '@/api/qu/qu'
 import RepoSelect from '@/components/RepoSelect'
 import FileUpload from '@/components/FileUpload'
-import { QU_TYPE_OPTIONS, isObjectiveQuType, isFillQuType, isFillProgramQuType, isNormalFillQuType, isStemCodeQuType, isReadProgramQuType, isProgramQuType, isFixProgramQuType } from '@/filters'
+import { QU_TYPE_OPTIONS, isObjectiveQuType, isFillQuType, isFillProgramQuType, isNormalFillQuType, isStemCodeQuType, isReadProgramQuType, isReadProgramChoiceDisplay, isProgramQuType, isFixProgramQuType } from '@/filters'
 import { subjectiveAnswerLabel, parseFillProgramContent, stemCodeSectionLabel } from '@/utils/quFormat'
 
 export default {
@@ -315,6 +315,9 @@ export default {
     },
     isReadProgramType() {
       return isReadProgramQuType(this.postForm.quType)
+    },
+    isReadProgramChoiceType() {
+      return isReadProgramChoiceDisplay(this.postForm.quType, this.postForm.answerList)
     },
     isFixProgramType() {
       return isFixProgramQuType(this.postForm.quType)
@@ -448,9 +451,9 @@ export default {
           this.postForm.answerList.forEach(item => {
             item.isRight = true
           })
-        } else if (this.referenceText && this.referenceText.trim()) {
+        } else if (!this.isReadProgramChoiceType && this.referenceText && this.referenceText.trim()) {
           this.postForm.answerList = [{ isRight: true, content: this.referenceText.trim(), analysis: '' }]
-        } else {
+        } else if (!this.isReadProgramChoiceType) {
           this.postForm.answerList = []
         }
       }
@@ -475,7 +478,7 @@ export default {
       const parsed = parseFillProgramContent(this.postForm.content)
       this.stemText = parsed.stem
       this.codeText = parsed.code
-      if (!this.isFillProgramType && this.postForm.answerList && this.postForm.answerList.length > 0) {
+      if (!this.isFillProgramType && !this.isReadProgramChoiceType && this.postForm.answerList && this.postForm.answerList.length > 0) {
         this.referenceText = this.postForm.answerList.map(item => item.content).join('\n\n')
       }
     },
@@ -494,7 +497,7 @@ export default {
 
       let rightCount = 0
 
-      if (this.isObjectiveType) {
+      if (this.isObjectiveType || this.isReadProgramChoiceType) {
         this.postForm.answerList.forEach(function(item) {
           if (item.isRight) {
             rightCount += 1
@@ -502,10 +505,10 @@ export default {
         })
       }
 
-      if (this.postForm.quType === 1) {
+      if (this.postForm.quType === 1 || this.isReadProgramChoiceType) {
         if (rightCount !== 1) {
           this.$message({
-            message: '单选题答案只能有一个',
+            message: this.isReadProgramChoiceType ? '阅读程序选择题只能有一个正确答案' : '单选题答案只能有一个',
             type: 'warning'
           })
 
@@ -554,7 +557,7 @@ export default {
         return
       }
 
-      if (this.isReadProgramType) {
+      if (this.isReadProgramType && !this.isReadProgramChoiceType) {
         if (!this.referenceText || !this.referenceText.trim()) {
           this.$message({
             message: '阅读程序题必须填写运行结果/参考答案！',

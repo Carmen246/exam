@@ -82,9 +82,9 @@
           <p v-if="quData.image!=null && quData.image!=''">
             <el-image :src="quData.image" style="max-width:100%;" />
           </p>
-          <div v-if="quData.quType === 1 || quData.quType===3">
+          <div v-if="quData.quType === 1 || quData.quType === 3 || isReadProgramChoiceDisplay(quData.quType, quData.answerList)">
             <el-radio-group v-model="radioValue">
-              <el-radio v-for="item in quData.answerList" :label="item.id">{{ item.abc }}.{{ item.content }}
+              <el-radio v-for="item in quData.answerList" :key="item.id" :label="item.id">{{ item.abc }}.{{ item.content }}
                 <div v-if="item.image!=null && item.image!=''" style="clear: both">
                   <el-image :src="item.image" style="max-width:100%;" />
                 </div>
@@ -104,7 +104,7 @@
 
           </div>
 
-          <div v-if="isSubjectiveQuType(quData.quType)">
+          <div v-if="isSubjectiveQuType(quData.quType) && !isReadProgramChoiceDisplay(quData.quType, quData.answerList)">
             <el-input
               v-model="subjValue"
               type="textarea"
@@ -143,7 +143,7 @@ import { paperDetail, quDetail, handExam, fillAnswer } from '@/api/paper/exam'
 import { Loading } from 'element-ui'
 import ExamTimer from '@/views/paper/exam/components/ExamTimer'
 import FormattedText from '@/components/FormattedText'
-import { isSubjectiveQuType, isFillProgramQuType, isStemCodeQuType, isProgramQuType, isReadProgramQuType, isFixProgramQuType } from '@/filters'
+import { isSubjectiveQuType, isFillProgramQuType, isStemCodeQuType, isProgramQuType, isReadProgramQuType, isReadProgramChoiceDisplay, isFixProgramQuType } from '@/filters'
 import { needsCodeFormatForStem, parseFillProgramContent, subjectiveAnswerPlaceholder as getSubjectiveAnswerPlaceholder, stemCodeSectionLabel } from '@/utils/quFormat'
 
 export default {
@@ -321,6 +321,7 @@ export default {
     isStemCodeQuType,
     isProgramQuType,
     isReadProgramQuType,
+    isReadProgramChoiceDisplay,
     isFixProgramQuType,
     needsCodeFormatForStem,
     stemCodeSectionLabel,
@@ -343,7 +344,7 @@ export default {
       }
 
       let params
-      if (isSubjectiveQuType(this.quData.quType)) {
+      if (isSubjectiveQuType(this.quData.quType) && !isReadProgramChoiceDisplay(this.quData.quType, this.quData.answerList)) {
         params = {
           paperId: this.paperId,
           quId: this.cardItem.quId,
@@ -359,7 +360,7 @@ export default {
       }
 
       fillAnswer(params).then(() => {
-        if (isSubjectiveQuType(this.quData.quType)) {
+        if (isSubjectiveQuType(this.quData.quType) && !isReadProgramChoiceDisplay(this.quData.quType, this.quData.answerList)) {
           if (this.subjValue && this.subjValue.trim()) {
             this.cardItem.answered = true
           }
@@ -400,7 +401,8 @@ export default {
         // 填充该题目的答案
         if (this.quData.answerList) {
           this.quData.answerList.forEach((item) => {
-            if ((this.quData.quType === 1 || this.quData.quType === 3) && item.checked) {
+            if ((this.quData.quType === 1 || this.quData.quType === 3
+              || isReadProgramChoiceDisplay(this.quData.quType, this.quData.answerList)) && item.checked) {
               this.radioValue = item.id
             }
 
