@@ -319,6 +319,24 @@ public class QuServiceImpl extends ServiceImpl<QuMapper, Qu> implements QuServic
             if (CollectionUtils.isEmpty(answers)) {
                 throw new ServiceException(1, no + "阅读程序题至少要包含一个运行结果/参考答案！");
             }
+            if (isReadProgramChoiceAnswers(answers)) {
+                int trueCount = 0;
+                for (QuAnswerDTO a : answers) {
+                    if (a.getIsRight() == null) {
+                        throw new ServiceException(1, no + "必须定义选项是否正确项！");
+                    }
+                    if (StringUtils.isEmpty(a.getContent())) {
+                        throw new ServiceException(1, no + "选项内容不为空！");
+                    }
+                    if (a.getIsRight()) {
+                        trueCount += 1;
+                    }
+                }
+                if (trueCount != 1) {
+                    throw new ServiceException(1, no + "阅读程序选择题只能有一个正确项！");
+                }
+                return;
+            }
             for (QuAnswerDTO a : answers) {
                 if (StringUtils.isEmpty(a.getContent())) {
                     throw new ServiceException(1, no + "运行结果/参考答案内容不能为空！");
@@ -391,5 +409,20 @@ public class QuServiceImpl extends ServiceImpl<QuMapper, Qu> implements QuServic
             return false;
         }
         return text.matches("(?s).*(#include|#define|void\\s+main|int\\s+main|int\\s+\\w+\\s*\\(|public\\s+class|def\\s+\\w+\\(|function\\s+\\w+\\().*");
+    }
+
+    private boolean isReadProgramChoiceAnswers(List<QuAnswerDTO> answers) {
+        if (CollectionUtils.isEmpty(answers) || answers.size() < 2) {
+            return false;
+        }
+        for (QuAnswerDTO answer : answers) {
+            if (answer == null || StringUtils.isEmpty(answer.getContent())) {
+                return false;
+            }
+            if (containsCodeBlock(answer.getContent())) {
+                return false;
+            }
+        }
+        return true;
     }
 }
