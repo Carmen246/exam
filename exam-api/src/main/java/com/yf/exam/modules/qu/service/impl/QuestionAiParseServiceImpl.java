@@ -765,7 +765,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 qu.setRepoIds(reqDTO.getRepoIds());
             }
 
-            normalizeProgramChoiceQuestion(qu);
+            normalizeProgramChoiceQuestion(qu, reqDTO.getText(), index);
             normalizeFillProgramQuestion(qu, reqDTO.getText(), index);
             normalizeReadProgramQuestion(qu);
             normalizeFixProgramQuestion(qu);
@@ -913,7 +913,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     /**
      * 阅读程序题：content 存题干+完整程序，answerList 只存运行结果
      */
-    private void normalizeProgramChoiceQuestion(QuDetailDTO qu) {
+    private void normalizeProgramChoiceQuestion(QuDetailDTO qu, String sourceText, int questionIndex) {
         if (!QuType.READ_PROGRAM.equals(qu.getQuType())) {
             return;
         }
@@ -922,14 +922,22 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         }
 
         ProgramChoiceOptions options = extractProgramChoiceOptions(qu.getContent());
+        String sourceBlock = "";
         if (options == null || options.answers.size() < 4) {
-            return;
+            sourceBlock = findSourceQuestionBlock(sourceText, questionIndex, qu.getContent());
+            options = extractProgramChoiceOptions(sourceBlock);
+            if (options == null || options.answers.size() < 4) {
+                return;
+            }
         }
 
         String expectedAnswer = firstRightAnswerContent(qu.getAnswerList());
         int rightIndex = findMatchingOptionIndex(options.answers, expectedAnswer);
         if (rightIndex < 0) {
             rightIndex = findAnswerLetterIndexInText(qu.getContent(), options.answers.size());
+        }
+        if (rightIndex < 0) {
+            rightIndex = findAnswerLetterIndexInText(sourceBlock, options.answers.size());
         }
         if (rightIndex < 0) {
             return;
@@ -951,6 +959,39 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         qu.setAnswerList(answerList);
     }
 
+    private String findSourceQuestionBlock(String sourceText, int questionIndex, String content) {
+        List<String> blocks = splitQuestionBlocks(sourceText);
+        if (!CollectionUtils.isEmpty(blocks) && questionIndex > 0 && questionIndex <= blocks.size()) {
+            return blocks.get(questionIndex - 1);
+        }
+
+        String codeKey = firstCodeKey(content);
+        if (StringUtils.isBlank(codeKey) || CollectionUtils.isEmpty(blocks)) {
+            return "";
+        }
+        for (String block : blocks) {
+            if (StringUtils.defaultString(block).contains(codeKey)) {
+                return block;
+            }
+        }
+        return "";
+    }
+
+    private String firstCodeKey(String text) {
+        if (StringUtils.isBlank(text)) {
+            return "";
+        }
+        String[] lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n");
+        for (String line : lines) {
+            String value = line.trim();
+            if (value.length() >= 8 && (value.contains("#include")
+                    || value.matches(".*\\b(main|printf|scanf|return|if|for|while)\\b.*"))) {
+                return value;
+            }
+        }
+        return "";
+    }
+
     private ProgramChoiceOptions extractProgramChoiceOptions(String content) {
         String text = StringUtils.defaultString(content).trim();
         Matcher firstOption = Pattern.compile("(?s)\\sA\\s*[\\.、．]\\s*").matcher(text);
@@ -963,7 +1004,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         List<String> options = new ArrayList<>();
         Matcher matcher = INLINE_OPTION_PATTERN.matcher(optionText);
         while (matcher.find()) {
-            String option = matcher.group(2).trim();
+            String option = cleanChoiceOptionText(matcher.group(2));
             if (StringUtils.isNotBlank(option)) {
                 options.add(option);
             }
@@ -972,6 +1013,12 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             return null;
         }
         return new ProgramChoiceOptions(stemCode, options);
+    }
+
+    private String cleanChoiceOptionText(String option) {
+        return StringUtils.defaultString(option)
+                .replaceAll("(?is)\\s*答案\\s*[:：]\\s*[A-D]\\b.*$", "")
+                .trim();
     }
 
     private String firstRightAnswerContent(List<QuAnswerDTO> answers) {
