@@ -65,7 +65,7 @@ export function isReadProgramQuType(type) {
   return type === 6
 }
 
-export { isReadProgramChoiceDisplay } from '@/utils/quFormat'
+export { isReadProgramChoiceDisplay, isFillProgramChoiceDisplay } from '@/utils/quFormat'
 
 export function isProgramQuType(type) {
   return type === 7

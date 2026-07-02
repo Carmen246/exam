@@ -52,7 +52,23 @@
           </div>
         </div>
 
-        <div v-if="isFillProgramQuType(quData.quType) && quData.answerList && quData.answerList.length">
+        <div v-if="isFillProgramQuType(quData.quType) && isFillProgramChoiceDisplay(quData.quType, quData.answerList)">
+          <div v-for="(an, idx) in quData.answerList" :key="idx" class="blank-choice-group">
+            <div v-if="quData.answerList.length > 1" class="section-title">{{ fillProgramBlankLabel(idx) }}</div>
+            <div
+              v-for="opt in an.optionList"
+              :key="opt.letter"
+              class="blank-answer-line"
+              :class="{ 'blank-choice-right': opt.isRight }"
+            >
+              {{ opt.letter }}. <formatted-text :text="opt.content" />
+              <el-tag v-if="opt.isRight" size="mini" type="success">正确</el-tag>
+              <div v-if="opt.analysis" class="option-analysis">答案解析：{{ opt.analysis }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="isFillProgramQuType(quData.quType) && quData.answerList && quData.answerList.length && !isFillProgramChoiceDisplay(quData.quType, quData.answerList)">
           <div class="section-title">各空参考答案</div>
           <div v-for="(an, idx) in quData.answerList" :key="idx" class="blank-answer-line">
             {{ fillProgramBlankLabel(idx) }}：<formatted-text :text="an.content" />
@@ -81,10 +97,21 @@
 
     <el-card v-if="showOptionAnalysis" class="qu-analysis" style="margin-top: 20px; margin-bottom: 30px">
       选项解析：
-      <div v-for="an in quData.answerList" v-if="an.analysis" :key="an.id" class="qu-analysis-line">
-        <p style="color: #555;">{{ an.content }}：</p>
-        <p style="color: #1890ff;">{{ an.analysis }}</p>
-      </div>
+      <template v-if="isFillProgramChoiceDisplay(quData.quType, quData.answerList)">
+        <div v-for="(an, idx) in quData.answerList" :key="idx">
+          <p v-if="quData.answerList.length > 1" style="color: #303133; font-weight: 600;">{{ fillProgramBlankLabel(idx) }}</p>
+          <div v-for="opt in an.optionList" v-if="opt.analysis" :key="opt.letter" class="qu-analysis-line">
+            <p style="color: #555;">{{ opt.letter }}. {{ opt.content }}：</p>
+            <p style="color: #1890ff;">{{ opt.analysis }}</p>
+          </div>
+        </div>
+      </template>
+      <template v-else>
+        <div v-for="an in quData.answerList" v-if="an.analysis" :key="an.id" class="qu-analysis-line">
+          <p style="color: #555;">{{ an.content }}：</p>
+          <p style="color: #1890ff;">{{ an.analysis }}</p>
+        </div>
+      </template>
       <p v-if="analysisCount === 0">暂无选项解析</p>
     </el-card>
 
@@ -102,6 +129,7 @@ import {
   isStemCodeQuType,
   isReadProgramQuType,
   isReadProgramChoiceDisplay,
+  isFillProgramChoiceDisplay,
   isProgramQuType,
   isFixProgramQuType
 } from '@/filters'
@@ -144,6 +172,7 @@ export default {
       return this.quData.quType === 1
         || this.quData.quType === 2
         || isReadProgramChoiceDisplay(this.quData.quType, this.quData.answerList)
+        || isFillProgramChoiceDisplay(this.quData.quType, this.quData.answerList)
     }
   },
   created() {
@@ -154,6 +183,7 @@ export default {
   },
   methods: {
     isFillProgramQuType,
+    isFillProgramChoiceDisplay,
     isNormalFillQuType,
     isStemCodeQuType,
     isProgramQuType,
@@ -171,6 +201,13 @@ export default {
         this.quData.answerList.forEach((an) => {
           if (an.analysis) {
             this.analysisCount += 1
+          }
+          if (an.optionList && an.optionList.length) {
+            an.optionList.forEach((opt) => {
+              if (opt.analysis) {
+                this.analysisCount += 1
+              }
+            })
           }
           if (an.isRight) {
             if (this.quData.quType === 1 || this.quData.quType === 3
@@ -209,6 +246,22 @@ export default {
   .blank-answer-line {
     margin: 6px 0;
     color: #606266;
+  }
+
+  .blank-choice-right {
+    color: #67c23a;
+    font-weight: 600;
+  }
+
+  .option-analysis {
+    width: 100%;
+    margin-top: 4px;
+    color: #909399;
+    font-size: 13px;
+  }
+
+  .blank-choice-group + .blank-choice-group {
+    margin-top: 16px;
   }
 
   .qu-analysis p{

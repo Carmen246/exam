@@ -25,6 +25,7 @@ import org.springframework.util.CollectionUtils;
 import com.yf.exam.modules.qu.dto.QuestionImportReqDTO;
 import com.yf.exam.modules.qu.dto.QuestionImportRespDTO;
 import com.yf.exam.modules.qu.service.QuService;
+import com.yf.exam.modules.qu.support.FillProgramBlankOptionSupport;
 import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
 import com.yf.exam.modules.qu.support.ProgramContentFormatter;
 import com.yf.exam.modules.qu.support.QuestionBoundaryHelper;
@@ -36,8 +37,6 @@ import com.yf.exam.modules.qu.support.ImportTaskProgressListener;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -96,7 +95,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     + "程序填空题(5)：content=题干说明+程序代码全文(代码中空位必须用____表示，禁止把答案写进代码)，"
                     + "answerList=每个空的参考答案(按出现顺序)，不要把完整程序放进 answerList。"
                     + "程序填空选择题：代码后的(3)(4)(5)是空位编号不是题号，其后A/B/C/D是该空候选项不是新题；"
-                    + "仍按程序填空题解析，answerList只存各空正确答案，候选项可不写入answerList。"
+                    + "仍按程序填空题解析，answerList只存各空正确答案，候选项写入各空optionList(与单选题展示相同)。"
                     + "阅读程序写结果题(6)：content=题干+完整程序(无空位，不含A/B/C/D选项)；"
                     + "若原题有A/B/C/D选项，answerList存全部选项(与单选题相同)，仅一个isRight=true，"
                     + "content中不要重复放选项。"
@@ -107,7 +106,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     + "{\"questions\":[{\"quType\":1,\"level\":1,\"content\":\"题干\","
                     + "\"analysis\":\"整体解析，说明本题考查点和正确答案依据，不能为空\",\"image\":\"\",\"remark\":\"\","
                     + "\"repoIds\":[],\"answerList\":[{\"content\":\"选项或参考答案内容\","
-                    + "\"isRight\":true,\"image\":\"\",\"analysis\":\"答案解析，说明依据，不能为空\"}]}]}";
+                    + "\"isRight\":true,\"image\":\"\",\"analysis\":\"答案解析，说明依据，不能为空\","
+                    + "\"optionList\":[{\"letter\":\"A\",\"content\":\"&r\",\"isRight\":true,\"analysis\":\"...\"}]}]}";
     private static final String NORMALIZE_SYSTEM_PROMPT =
             "你是试题文本清洗助手，负责把从 Word、PDF、OCR 或复制粘贴中抽取出的混乱试题文本整理为规范纯文本。"
                     + "要求："
@@ -679,7 +679,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 + "必须保留在同一个 answerList 元素的 content 中，不要拆成多个答案项。\n"
                 + "   - 程序填空选择题：代码后的(3)(4)(5)或（3）（4）（5）是空位编号，不是新题号；"
                 + "紧随其后的A/B/C/D是该空的候选选项，不是整道选择题，不要拆成新题。\n"
-                + "   - 此类题仍解析为程序填空题 quType=5，answerList 只存每个空的正确答案，候选项可不写入 answerList。\n"
+                + "   - 此类题仍解析为程序填空题 quType=5，answerList 只存每个空的正确答案；"
+                + "若原文提供A/B/C/D候选项，必须写入各空 optionList(展示与单选题相同)，content 不含选项文本。\n"
                 + "   - 程序填空题结束后，下一道新题(如「以下函数把b字符串...」)必须单独成题，不要与上一道合并。\n"
                 + "   - 与 quType=6(完整程序无空位)、quType=7(只给需求无骨架)、quType=8(改错)区分。\n"
                 + "7. 阅读程序写结果题 quType=6（重点）：\n"
@@ -765,7 +766,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             }
 
             normalizeProgramChoiceQuestion(qu);
-            normalizeFillProgramQuestion(qu);
+            normalizeFillProgramQuestion(qu, reqDTO.getText(), index);
             normalizeReadProgramQuestion(qu);
             normalizeFixProgramQuestion(qu);
             splitStemAndReference(qu);
@@ -778,15 +779,19 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     /**
      * 程序填空题：content 存题干+代码骨架，answerList 只存各空参考答案
      */
-    private void normalizeFillProgramQuestion(QuDetailDTO qu) {
+    private void normalizeFillProgramQuestion(QuDetailDTO qu, String sourceText, int questionIndex) {
         if (!QuType.FILL_PROGRAM.equals(qu.getQuType())) {
             return;
         }
 
         String content = StringUtils.defaultString(qu.getContent()).trim();
+        List<QuAnswerDTO> originalAnswers = qu.getAnswerList() == null
+                ? new ArrayList<>()
+                : new ArrayList<>(qu.getAnswerList());
 
-        // Extract per-blank options (e.g. (1) A. &r  B. &area ...) BEFORE processing
-        Map<Integer, Map<String, String>> blankOptions = extractFillBlankOptions(content);
+        Map<Integer, Map<String, String>> blankOptions = FillProgramBlankOptionSupport
+                .extractOptionsForQuestion(qu, content, sourceText, questionIndex);
+        content = FillProgramBlankOptionSupport.stripFillBlankOptionSection(content);
 
         List<String> aiAnswers = collectAiBlankAnswers(qu.getAnswerList());
         String programFromAnswer = null;
@@ -827,11 +832,16 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         content = programContentFormatter.mergeStemAndCode(stem, code);
 
         List<QuAnswerDTO> blankAnswers = buildBlankAnswerList(processed.getBlanks());
-        resolveFillBlankLetterAnswers(blankAnswers, blankOptions);
+        FillProgramBlankOptionSupport.resolveFillBlankLetterAnswers(blankAnswers, blankOptions);
+        FillProgramBlankOptionSupport.propagateSharedBlankOptions(blankAnswers, blankOptions);
+        FillProgramBlankOptionSupport.preserveAiOptionLists(blankAnswers, originalAnswers);
+        FillProgramBlankOptionSupport.attachFillBlankOptions(blankAnswers, blankOptions);
+        FillProgramBlankOptionSupport.fillOptionAnalysis(blankAnswers);
         appendBlankNotesToAnalysis(qu, processed.getBlanks());
 
         qu.setContent(content);
         qu.setAnswerList(blankAnswers);
+        FillProgramBlankOptionSupport.encodeToRemark(qu);
     }
 
     private List<String> collectAiBlankAnswers(List<QuAnswerDTO> answers) {
@@ -899,63 +909,6 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         }
     }
 
-    private static final Pattern FILL_BLANK_NUM = Pattern.compile("(?m)^\\s*[（(](\\d+)[)）]\\s*$");
-    private static final Pattern FILL_OPTION_LINE = Pattern.compile("^\\s*([A-D])\\s*[.、．]\\s*(.+)$");
-
-    /**
-     * Extract per-blank multiple-choice options from program-fill-blank content.
-     * Format: (1) followed by A. xxx B. xxx C. xxx D. xxx
-     * Returns map: blankNumber → (letter → optionText)
-     */
-    private Map<Integer, Map<String, String>> extractFillBlankOptions(String content) {
-        Map<Integer, Map<String, String>> result = new HashMap<>();
-        if (StringUtils.isBlank(content)) {
-            return result;
-        }
-        String[] lines = content.split("\\r?\\n");
-        int currentBlank = -1;
-        for (String line : lines) {
-            Matcher blankMatcher = FILL_BLANK_NUM.matcher(line.trim());
-            if (blankMatcher.matches()) {
-                currentBlank = Integer.parseInt(blankMatcher.group(1));
-                result.put(currentBlank, new LinkedHashMap<>());
-                continue;
-            }
-            if (currentBlank > 0 && result.containsKey(currentBlank)) {
-                Matcher optMatcher = FILL_OPTION_LINE.matcher(line.trim());
-                if (optMatcher.matches()) {
-                    result.get(currentBlank).put(optMatcher.group(1), optMatcher.group(2).trim());
-                }
-            }
-        }
-        return result;
-    }
-
-    /**
-     * For program-fill-blank questions: if an answer is just a letter (A/B/C/D)
-     * and we have extracted options, replace it with the actual option text.
-     */
-    private void resolveFillBlankLetterAnswers(List<QuAnswerDTO> answers,
-                                                Map<Integer, Map<String, String>> blankOptions) {
-        if (CollectionUtils.isEmpty(answers) || blankOptions.isEmpty()) {
-            return;
-        }
-        for (int i = 0; i < answers.size(); i++) {
-            QuAnswerDTO answer = answers.get(i);
-            if (answer == null || StringUtils.isBlank(answer.getContent())) {
-                continue;
-            }
-            String text = answer.getContent().trim();
-            if (text.length() == 1 && Character.isLetter(text.charAt(0))) {
-                String letter = text.toUpperCase();
-                int blankNum = i + 1;
-                Map<String, String> opts = blankOptions.get(blankNum);
-                if (opts != null && opts.containsKey(letter)) {
-                    answer.setContent(opts.get(letter));
-                }
-            }
-        }
-    }
 
     /**
      * 阅读程序题：content 存题干+完整程序，answerList 只存运行结果
@@ -1638,7 +1591,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
     private void prepareQuestionForInsert(QuDetailDTO qu, int index) {
 
-        normalizeFillProgramQuestion(qu);
+        normalizeFillProgramQuestion(qu, null, index);
         splitStemAndReference(qu);
         sanitizeVisibleFillMarkers(qu);
         checkQuestion(qu, index);

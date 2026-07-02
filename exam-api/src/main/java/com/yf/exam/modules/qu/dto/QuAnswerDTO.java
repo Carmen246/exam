@@ -5,6 +5,7 @@ import io.swagger.annotations.ApiModelProperty;
 import lombok.Data;
 
 import java.io.Serializable;
+import java.util.List;
 
 /**
 * <p>
@@ -38,5 +39,8 @@ public class QuAnswerDTO implements Serializable {
 
     @ApiModelProperty(value = "答案分析", required=true)
     private String analysis;
+
+    @ApiModelProperty(value = "程序填空题候选项（有A/B/C/D选项时使用）")
+    private List<QuAnswerOptionDTO> optionList;
     
 }

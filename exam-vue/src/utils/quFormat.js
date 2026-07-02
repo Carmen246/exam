@@ -121,6 +121,18 @@ export function isReadProgramChoiceDisplay(quType, answerList) {
   return answerList.every(item => item && item.content && !looksLikeCode(item.content))
 }
 
+/**
+ * 程序填空题是否带各空 A/B/C/D 候选项
+ * @param {number} quType
+ * @param {Array} answerList
+ */
+export function isFillProgramChoiceDisplay(quType, answerList) {
+  if (quType !== 5 || !answerList || !answerList.length) {
+    return false
+  }
+  return answerList.some(item => item && item.optionList && item.optionList.length >= 2)
+}
+
 export function isProgramQuType(type) {
   return type === 7
 }

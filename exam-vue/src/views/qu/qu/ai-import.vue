@@ -269,6 +269,30 @@
                   </div>
                 </div>
 
+                <div v-else-if="isFillProgramQuType(item.quType) && isFillProgramChoiceDisplay(item.quType, item.answerList)" class="answer-list">
+                  <div
+                    v-for="(answer, answerIndex) in item.answerList"
+                    :key="answerIndex"
+                    class="fill-blank-choice-group"
+                  >
+                    <div v-if="item.answerList.length > 1" class="answer-section-title">{{ fillProgramBlankLabel(answerIndex) }}</div>
+                    <div
+                      v-for="(opt, optIndex) in answer.optionList"
+                      :key="optIndex"
+                      class="answer-item"
+                      :class="{ right: opt.isRight }"
+                    >
+                      <span class="answer-prefix">{{ opt.letter }}.</span>
+                      <formatted-text :text="opt.content" class="answer-content" />
+                      <el-tag v-if="opt.isRight" size="mini" type="success">正确</el-tag>
+
+                      <div v-if="opt.analysis" class="answer-analysis">
+                        答案解析：<formatted-text :text="opt.analysis" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <div v-else-if="isFillProgramQuType(item.quType) && item.answerList && item.answerList.length" class="answer-list">
                   <div class="answer-section-title">各空参考答案</div>
                   <div
@@ -373,7 +397,7 @@
 import RepoSelect from '@/components/RepoSelect'
 import FormattedText from '@/components/FormattedText'
 import { createImportTask, getImportTaskStatus, retryImportTask, confirmQuestionImport, TASK_POLL_INTERVAL } from '@/api/qu/qu'
-import { quTypeFilter, isObjectiveQuType, isFillQuType, isFillProgramQuType, isNormalFillQuType, isSubjectiveQuType, isStemCodeQuType, isProgramQuType, isReadProgramChoiceDisplay } from '@/filters'
+import { quTypeFilter, isObjectiveQuType, isFillQuType, isFillProgramQuType, isNormalFillQuType, isSubjectiveQuType, isStemCodeQuType, isProgramQuType, isReadProgramChoiceDisplay, isFillProgramChoiceDisplay } from '@/filters'
 import {
   needsCodeFormatForStem,
   needsCodeFormatForAnswer,
@@ -868,6 +892,7 @@ export default {
     isStemCodeQuType,
     isProgramQuType,
     isReadProgramChoiceDisplay,
+    isFillProgramChoiceDisplay,
     needsCodeFormatForStem,
     needsCodeFormatForAnswer,
     subjectiveAnswerLabel,
@@ -1015,6 +1040,14 @@ export default {
 
 .file-selected-alert {
   margin-top: 10px;
+}
+
+.fill-blank-choice-group + .fill-blank-choice-group {
+  margin-top: 14px;
+}
+
+.answer-list .fill-blank-choice-group .answer-section-title {
+  margin-bottom: 8px;
 }
 
 .merge-warning-alert {

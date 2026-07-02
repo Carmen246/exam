@@ -17,6 +17,7 @@ import com.yf.exam.modules.qu.entity.Qu;
 import com.yf.exam.modules.qu.entity.QuAnswer;
 import com.yf.exam.modules.qu.entity.QuRepo;
 import com.yf.exam.modules.qu.enums.QuType;
+import com.yf.exam.modules.qu.support.FillProgramBlankOptionSupport;
 import com.yf.exam.modules.qu.mapper.QuMapper;
 import com.yf.exam.modules.qu.service.QuAnswerService;
 import com.yf.exam.modules.qu.service.QuRepoService;
@@ -101,6 +102,8 @@ public class QuServiceImpl extends ServiceImpl<QuMapper, Qu> implements QuServic
         List<String> repoIds = quRepoService.listByQu(id);
         respDTO.setRepoIds(repoIds);
 
+        FillProgramBlankOptionSupport.decodeFromRemark(respDTO);
+
         return respDTO;
     }
 
@@ -112,6 +115,8 @@ public class QuServiceImpl extends ServiceImpl<QuMapper, Qu> implements QuServic
 
         // 校验数据
         this.checkData(reqDTO, "");
+
+        FillProgramBlankOptionSupport.encodeToRemark(reqDTO);
 
         Qu qu = new Qu();
         BeanMapper.copy(reqDTO, qu);
