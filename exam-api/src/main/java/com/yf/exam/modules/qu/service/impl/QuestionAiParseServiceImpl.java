@@ -36,6 +36,7 @@ import com.yf.exam.modules.qu.support.ImportTaskProgressListener;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -97,7 +98,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     + "answerList=每个空的参考答案(按出现顺序)，不要把完整程序放进 answerList。"
                     + "程序填空选择题：代码后的(3)(4)(5)是空位编号不是题号，其后A/B/C/D是该空候选项不是新题；"
                     + "仍按程序填空题解析，answerList只存各空正确答案，候选项可不写入answerList。"
-                    + "阅读程序写结果题(6)：content=题干+完整程序(无空位)+A/B/C/D选项(如有，放在代码之后)，answerList=运行结果。"
+                    + "阅读程序写结果题(6)：content=题干+完整程序(无空位)+A/B/C/D选项(如有，放在代码之后)，"
+                    + "answerList=运行结果；若原题有A/B/C/D选项，answerList只存一条，格式如\"A. 0\"(选项字母+选项内容)。"
                     + "编程题(7)：content=仅题干，answerList[0]=完整参考程序，禁止把程序写进 content。"
                     + "程序改错题(8)：content=题干+有错程序，answerList=改正后程序；关键词“改错/改正/错误”。"
                     + "程序代码必须保留换行与缩进，JSON 中用 \\n 表示换行。"
@@ -686,6 +688,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 + "   - content=题干 + \\n\\n + 完整程序代码；answerList=运行结果或参考答案(非程序代码)。\n"
                 + "   - 如果原始文本包含A/B/C/D选项，必须将选项完整保留在content末尾(程序代码之后另起一行)，"
                 + "格式如\"A. 选项内容 B. 选项内容 C. 选项内容 D. 选项内容\"，不要丢弃选项。\n"
+                + "   - 若原题有A/B/C/D选项，answerList只存一条正确答案，格式如\"A. 0\"(选项字母+选项内容)，"
+                + "不要把四个选项分别写入 answerList。\n"
                 + "   - 不要把完整程序放进 answerList；与 quType=5(有空位)、quType=8(改错)区分。\n"
                 + "8. 编程题 quType=7（重点）：\n"
                 + "   - 识别特征：只给题目需求/功能描述，要求学生编写完整程序，无现成代码骨架。\n"
@@ -974,23 +978,23 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         String expectedAnswer = firstRightAnswerContent(qu.getAnswerList());
         int rightIndex = findMatchingOptionIndex(options.answers, expectedAnswer);
         if (rightIndex < 0) {
+            rightIndex = findAnswerLetterIndexInText(qu.getContent(), options.answers.size());
+        }
+        if (rightIndex < 0) {
             return;
         }
 
-        List<QuAnswerDTO> answerList = new ArrayList<>();
-        for (int i = 0; i < options.answers.size(); i++) {
-            QuAnswerDTO answer = new QuAnswerDTO();
-            answer.setContent(options.answers.get(i));
-            answer.setIsRight(i == rightIndex);
-            answer.setImage("");
-            answer.setAnalysis("");
-            answerList.add(answer);
-        }
+        QuAnswerDTO answer = new QuAnswerDTO();
+        answer.setContent(formatChoiceAnswer(rightIndex, options.answers.get(rightIndex)));
+        answer.setIsRight(true);
+        answer.setImage("");
+        answer.setAnalysis("");
+        qu.setAnswerList(Collections.singletonList(answer));
 
         ProgramContentFormatter.StemCodeParts parts = programContentFormatter.splitStemAndCode(options.stemCode);
         String content = programContentFormatter.mergeStemAndCode(parts.getStem(), parts.getCode());
+        content = appendChoiceOptionsToContent(content, options.answers);
         qu.setContent(content);
-        qu.setAnswerList(answerList);
     }
 
     private ProgramChoiceOptions extractProgramChoiceOptions(String content) {
@@ -1061,6 +1065,77 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 .trim();
     }
 
+    private String formatChoiceAnswer(int index, String optionContent) {
+        char letter = (char) ('A' + index);
+        return letter + ". " + StringUtils.defaultString(optionContent).trim();
+    }
+
+    private String formatChoiceOptionsText(List<String> options) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < options.size(); i++) {
+            if (i > 0) {
+                sb.append("\n");
+            }
+            sb.append(formatChoiceAnswer(i, options.get(i)));
+        }
+        return sb.toString();
+    }
+
+    private String appendChoiceOptionsToContent(String content, List<String> options) {
+        if (CollectionUtils.isEmpty(options)) {
+            return content;
+        }
+        String optionsText = formatChoiceOptionsText(options);
+        if (StringUtils.isBlank(content)) {
+            return optionsText;
+        }
+        if (content.contains(optionsText)) {
+            return content;
+        }
+        return content + "\n\n" + optionsText;
+    }
+
+    private int findAnswerLetterIndexInText(String text, int optionCount) {
+        Matcher matcher = Pattern.compile("(?im)(?:^|\\n)\\s*答案\\s*[:：]\\s*([A-D])\\b")
+                .matcher(StringUtils.defaultString(text));
+        if (!matcher.find()) {
+            return -1;
+        }
+        int index = Character.toUpperCase(matcher.group(1).charAt(0)) - 'A';
+        return index >= 0 && index < optionCount ? index : -1;
+    }
+
+    private boolean isFormattedChoiceAnswer(String text) {
+        return Pattern.compile("(?is)^\\s*[A-D]\\s*[\\.、．]\\s*.+$")
+                .matcher(StringUtils.defaultString(text).trim())
+                .matches();
+    }
+
+    private void consolidateReadProgramChoiceAnswer(QuDetailDTO qu, ProgramChoiceOptions options) {
+        if (options == null || options.answers.size() < 4 || CollectionUtils.isEmpty(qu.getAnswerList())) {
+            return;
+        }
+        if (qu.getAnswerList().size() == 1 && isFormattedChoiceAnswer(qu.getAnswerList().get(0).getContent())) {
+            return;
+        }
+
+        String expectedAnswer = firstRightAnswerContent(qu.getAnswerList());
+        int rightIndex = findMatchingOptionIndex(options.answers, expectedAnswer);
+        if (rightIndex < 0) {
+            rightIndex = findAnswerLetterIndexInText(qu.getContent(), options.answers.size());
+        }
+        if (rightIndex < 0) {
+            return;
+        }
+
+        QuAnswerDTO answer = new QuAnswerDTO();
+        answer.setContent(formatChoiceAnswer(rightIndex, options.answers.get(rightIndex)));
+        answer.setIsRight(true);
+        answer.setImage("");
+        answer.setAnalysis("");
+        qu.setAnswerList(Collections.singletonList(answer));
+    }
+
     private static class ProgramChoiceOptions {
         private final String stemCode;
         private final List<String> answers;
@@ -1075,16 +1150,28 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         if (!QuType.READ_PROGRAM.equals(qu.getQuType())) {
             return;
         }
-        // Skip if normalizeProgramChoiceQuestion already set up A/B/C/D choices
-        if (qu.getAnswerList() != null && qu.getAnswerList().size() == 4) {
-            long rightCount = qu.getAnswerList().stream()
-                    .filter(a -> a != null && Boolean.TRUE.equals(a.getIsRight())).count();
-            if (rightCount == 1) {
-                return; // already normalized with proper choice structure
+        // Skip if normalizeProgramChoiceQuestion already set up formatted choice answer
+        if (qu.getAnswerList() != null && qu.getAnswerList().size() == 1) {
+            QuAnswerDTO only = qu.getAnswerList().get(0);
+            if (only != null && isFormattedChoiceAnswer(only.getContent())) {
+                return;
             }
         }
 
         String content = StringUtils.defaultString(qu.getContent()).trim();
+        ProgramChoiceOptions options = extractProgramChoiceOptions(content);
+        if (options != null && options.answers.size() >= 4) {
+            consolidateReadProgramChoiceAnswer(qu, options);
+            if (qu.getAnswerList() != null && qu.getAnswerList().size() == 1
+                    && isFormattedChoiceAnswer(qu.getAnswerList().get(0).getContent())) {
+                ProgramContentFormatter.StemCodeParts parts = programContentFormatter.splitStemAndCode(options.stemCode);
+                content = programContentFormatter.mergeStemAndCode(parts.getStem(), parts.getCode());
+                content = appendChoiceOptionsToContent(content, options.answers);
+                qu.setContent(content);
+                return;
+            }
+        }
+
         List<QuAnswerDTO> resultAnswers = new ArrayList<>();
         String programFromAnswer = null;
 
