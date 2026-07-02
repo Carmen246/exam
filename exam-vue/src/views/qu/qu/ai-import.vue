@@ -36,18 +36,6 @@
             </el-form-item>
           </el-col>
         </el-row>
-        <el-row :gutter="16">
-          <el-col :xs="24">
-            <el-form-item label="处理模式">
-              <el-radio-group v-model="parseForm.importMode" :disabled="taskRunning">
-                <el-radio label="SMART">智能模式</el-radio>
-                <el-radio label="FAST">极速模式</el-radio>
-                <el-radio label="DEEP">深度模式</el-radio>
-              </el-radio-group>
-              <div class="import-mode-tip">智能模式（默认）：每批本地清洗后直接 AI 解析，失败批次自动深度清洗后重试。</div>
-            </el-form-item>
-          </el-col>
-        </el-row>
       </el-form>
 
       <el-card v-if="taskRunning || taskFailed || taskPartialCompleted" shadow="never" class="task-progress-card">
@@ -201,17 +189,6 @@
                 <el-tag size="mini" type="success">共 {{ questions.length }} 题</el-tag>
               </div>
             </div>
-
-            <el-alert
-              v-if="mergeWarnings.length > 0"
-              class="merge-warning-alert"
-              title="答案文档合并提示"
-              type="warning"
-              :closable="false"
-              show-icon
-            >
-              <div v-for="(warning, wIndex) in mergeWarnings" :key="wIndex" class="merge-warning-item">{{ warning }}</div>
-            </el-alert>
 
             <el-empty v-if="questions.length === 0" :description="taskRunning ? '正在解析，请稍候...' : '解析完成后将在这里预览试题'" />
 
@@ -430,8 +407,7 @@ export default {
       parseForm: {
         repoIds: [],
         level: 1,
-        text: '',
-        importMode: 'SMART'
+        text: ''
       },
       levelOptions: [
         { label: '普通', value: 1 },
@@ -450,7 +426,6 @@ export default {
       taskFailedBatchCount: 0,
       taskDeepCleanBatchCount: 0,
       taskBatches: [],
-      mergeWarnings: [],
       failedBatchCollapse: ['failed'],
       batchPreviewDialogVisible: false,
       batchPreviewItem: {},
@@ -615,7 +590,7 @@ export default {
           text: hasText ? this.parseForm.text.trim() : null,
           repoIds: this.parseForm.repoIds,
           level: this.parseForm.level,
-          importMode: this.parseForm.importMode
+          importMode: 'SMART'
         }).then(res => {
           const data = res.data || {}
           this.taskId = data.taskId || ''
@@ -751,7 +726,6 @@ export default {
       this.taskFailedBatchCount = data.failedBatchCount || 0
       this.taskDeepCleanBatchCount = data.deepCleanBatchCount || 0
       this.taskBatches = data.batches || []
-      this.mergeWarnings = data.mergeWarnings || []
     },
 
     handleTaskPartialCompleted(data) {
@@ -797,7 +771,6 @@ export default {
       this.taskFailedBatchCount = 0
       this.taskDeepCleanBatchCount = 0
       this.taskBatches = []
-      this.mergeWarnings = []
       this.taskHasNormalizedText = false
       if (clearLastStatus) {
         this.lastPolledStatus = ''
@@ -1006,14 +979,6 @@ export default {
   width: 180px;
 }
 
-.deep-normalize-tip,
-.import-mode-tip {
-  margin-top: 8px;
-  color: #909399;
-  font-size: 12px;
-  line-height: 20px;
-}
-
 .main-row {
   margin-top: 4px;
 }
@@ -1048,15 +1013,6 @@ export default {
 
 .answer-list .fill-blank-choice-group .answer-section-title {
   margin-bottom: 8px;
-}
-
-.merge-warning-alert {
-  margin-bottom: 12px;
-}
-
-.merge-warning-item {
-  line-height: 1.6;
-  font-size: 13px;
 }
 
 .upload-tip {
