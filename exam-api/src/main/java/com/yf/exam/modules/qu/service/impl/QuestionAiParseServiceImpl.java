@@ -765,6 +765,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 qu.setRepoIds(reqDTO.getRepoIds());
             }
 
+            normalizeObjectiveChoiceQuestion(qu, reqDTO.getText(), index);
             normalizeProgramChoiceQuestion(qu, reqDTO.getText(), index);
             normalizeFillProgramQuestion(qu, reqDTO.getText(), index);
             normalizeReadProgramQuestion(qu);
@@ -913,6 +914,120 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     /**
      * 阅读程序题：content 存题干+完整程序，answerList 只存运行结果
      */
+    private void normalizeObjectiveChoiceQuestion(QuDetailDTO qu, String sourceText, int questionIndex) {
+        if (!QuType.RADIO.equals(qu.getQuType()) && !QuType.MULTI.equals(qu.getQuType())) {
+            return;
+        }
+
+        ProgramChoiceOptions options = extractObjectiveChoiceOptions(qu.getContent());
+        String sourceBlock = "";
+        if (options == null || options.answers.size() <= currentAnswerCount(qu.getAnswerList())) {
+            sourceBlock = findSourceQuestionBlock(sourceText, questionIndex, qu.getContent());
+            ProgramChoiceOptions sourceOptions = extractObjectiveChoiceOptions(sourceBlock);
+            if (sourceOptions != null && (options == null || sourceOptions.answers.size() > options.answers.size())) {
+                options = sourceOptions;
+            }
+        }
+        if (options == null || options.answers.size() < 2) {
+            return;
+        }
+
+        List<Integer> rightIndexes = findRightOptionIndexes(options.answers, qu.getAnswerList());
+        if (rightIndexes.isEmpty()) {
+            rightIndexes = findAnswerLetterIndexesInText(qu.getContent(), options.answers.size());
+        }
+        if (rightIndexes.isEmpty()) {
+            rightIndexes = findAnswerLetterIndexesInText(sourceBlock, options.answers.size());
+        }
+        if (rightIndexes.isEmpty()) {
+            return;
+        }
+        if (QuType.RADIO.equals(qu.getQuType()) && rightIndexes.size() != 1) {
+            return;
+        }
+
+        List<QuAnswerDTO> answerList = new ArrayList<>();
+        for (int i = 0; i < options.answers.size(); i++) {
+            QuAnswerDTO answer = new QuAnswerDTO();
+            answer.setContent(options.answers.get(i));
+            answer.setIsRight(rightIndexes.contains(i));
+            answer.setImage("");
+            answer.setAnalysis("");
+            answerList.add(answer);
+        }
+
+        qu.setContent(formatObjectiveChoiceStem(options.stemCode));
+        qu.setAnswerList(answerList);
+    }
+
+    private int currentAnswerCount(List<QuAnswerDTO> answers) {
+        return answers == null ? 0 : answers.size();
+    }
+
+    private ProgramChoiceOptions extractObjectiveChoiceOptions(String content) {
+        String text = StringUtils.defaultString(content).trim();
+        Matcher firstOption = Pattern.compile("(?s)(?:^|\\s)A\\s*[\\.\\u3001\\uFF0E]\\s*").matcher(text);
+        if (!firstOption.find()) {
+            return null;
+        }
+
+        String stemCode = text.substring(0, firstOption.start()).trim();
+        String optionText = text.substring(firstOption.start()).trim();
+        List<String> options = new ArrayList<>();
+        Matcher matcher = INLINE_OPTION_PATTERN.matcher(optionText);
+        while (matcher.find()) {
+            String option = cleanChoiceOptionText(matcher.group(2));
+            if (StringUtils.isNotBlank(option)) {
+                options.add(option);
+            }
+        }
+        if (options.size() < 2) {
+            return null;
+        }
+        return new ProgramChoiceOptions(stemCode, options);
+    }
+
+    private List<Integer> findRightOptionIndexes(List<String> options, List<QuAnswerDTO> answers) {
+        List<Integer> indexes = new ArrayList<>();
+        if (CollectionUtils.isEmpty(options) || CollectionUtils.isEmpty(answers)) {
+            return indexes;
+        }
+        for (QuAnswerDTO answer : answers) {
+            if (answer == null || !Boolean.TRUE.equals(answer.getIsRight())) {
+                continue;
+            }
+            int index = findMatchingOptionIndex(options, answer.getContent());
+            if (index >= 0 && !indexes.contains(index)) {
+                indexes.add(index);
+            }
+        }
+        return indexes;
+    }
+
+    private List<Integer> findAnswerLetterIndexesInText(String text, int optionCount) {
+        List<Integer> indexes = new ArrayList<>();
+        Matcher matcher = Pattern.compile(
+                        "(?im)(?:^|\\n)\\s*\\u7B54\\u6848\\s*[:\\uFF1A]\\s*([A-D](?:\\s*[,/\\uFF0C\\u3001]?\\s*[A-D])*)\\b")
+                .matcher(StringUtils.defaultString(text));
+        if (!matcher.find()) {
+            return indexes;
+        }
+
+        Matcher letterMatcher = Pattern.compile("[A-D]", Pattern.CASE_INSENSITIVE).matcher(matcher.group(1));
+        while (letterMatcher.find()) {
+            int index = Character.toUpperCase(letterMatcher.group().charAt(0)) - 'A';
+            if (index >= 0 && index < optionCount && !indexes.contains(index)) {
+                indexes.add(index);
+            }
+        }
+        return indexes;
+    }
+
+    private String formatObjectiveChoiceStem(String stem) {
+        ProgramContentFormatter.StemCodeParts parts = programContentFormatter.splitStemAndCode(stem);
+        return programContentFormatter.mergeStemAndCode(parts.getStem(), parts.getCode());
+    }
+
     private void normalizeProgramChoiceQuestion(QuDetailDTO qu, String sourceText, int questionIndex) {
         if (!QuType.READ_PROGRAM.equals(qu.getQuType())) {
             return;
@@ -1676,7 +1791,13 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         int index = 1;
         for (QuDetailDTO qu : reqDTO.getQuestions()) {
             prepareQuestionForInsert(qu, index);
-            quService.save(qu);
+            try {
+                quService.save(qu);
+            } catch (ServiceException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new ServiceException(buildImportSaveErrorMessage(qu, index, e));
+            }
             index++;
         }
 
@@ -1687,7 +1808,11 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
     private void prepareQuestionForInsert(QuDetailDTO qu, int index) {
 
+        normalizeObjectiveChoiceQuestion(qu, null, index);
+        normalizeProgramChoiceQuestion(qu, null, index);
         normalizeFillProgramQuestion(qu, null, index);
+        normalizeReadProgramQuestion(qu);
+        normalizeFixProgramQuestion(qu);
         splitStemAndReference(qu);
         sanitizeVisibleFillMarkers(qu);
         checkQuestion(qu, index);
@@ -1729,6 +1854,39 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 answer.setAnalysis(restoreFillMarkers(answer.getAnalysis()));
             }
         }
+    }
+
+    private String buildImportSaveErrorMessage(QuDetailDTO qu, int index, Exception e) {
+        String reason = deepestExceptionMessage(e);
+        if (StringUtils.isBlank(reason)) {
+            reason = e.getClass().getSimpleName();
+        }
+
+        StringBuilder message = new StringBuilder("第").append(index).append("题入库失败：").append(reason);
+        if (StringUtils.containsIgnoreCase(reason, "data too long")
+                || StringUtils.containsIgnoreCase(reason, "too long")
+                || StringUtils.containsIgnoreCase(reason, "truncat")) {
+            message.append("。请检查题干/解析是否超过数据库字段长度");
+        }
+        if (qu != null) {
+            message.append("（题型=").append(qu.getQuType())
+                    .append("，题干长度=").append(StringUtils.length(qu.getContent()))
+                    .append("，解析长度=").append(StringUtils.length(qu.getAnalysis()))
+                    .append("）");
+        }
+        return message.toString();
+    }
+
+    private String deepestExceptionMessage(Throwable throwable) {
+        Throwable cursor = throwable;
+        String message = "";
+        while (cursor != null) {
+            if (StringUtils.isNotBlank(cursor.getMessage())) {
+                message = cursor.getMessage();
+            }
+            cursor = cursor.getCause();
+        }
+        return message;
     }
 
     private void sanitizeVisibleFillMarkers(QuDetailDTO qu) {
