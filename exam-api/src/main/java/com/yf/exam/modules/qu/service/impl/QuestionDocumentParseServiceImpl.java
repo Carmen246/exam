@@ -5,6 +5,7 @@ import com.yf.exam.modules.qu.service.QuestionDocumentParseService;
 import com.yf.exam.modules.qu.support.DocxBlankAwareTextExtractor;
 import com.yf.exam.modules.qu.support.AnswerDocumentTableParser;
 import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
+import com.yf.exam.modules.qu.support.PdfTextExtractor;
 import com.yf.exam.modules.qu.support.QuestionTextLocalNormalizer;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -25,6 +26,9 @@ public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseSe
 
     @Autowired
     private DocxBlankAwareTextExtractor docxBlankAwareTextExtractor;
+
+    @Autowired
+    private PdfTextExtractor pdfTextExtractor;
 
     @Autowired
     private FillProgramBlankProcessor fillProgramBlankProcessor;
@@ -101,10 +105,13 @@ public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseSe
             if ("txt".equalsIgnoreCase(ext)) {
                 return new String(bytesSupplier.get(), StandardCharsets.UTF_8);
             }
+            if ("pdf".equalsIgnoreCase(ext)) {
+                return pdfTextExtractor.extract(inputStreamSupplier.get());
+            }
             if ("xls".equalsIgnoreCase(ext) || "xlsx".equalsIgnoreCase(ext)) {
                 throw new ServiceException("Excel 文件请通过 AI 导入页面上传，系统将直接解析结构化数据");
             }
-            throw new ServiceException("暂只支持 docx、txt 文件！");
+            throw new ServiceException("暂只支持 docx、txt、pdf 文件！");
         } catch (ServiceException e) {
             throw e;
         } catch (Exception e) {

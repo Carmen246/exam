@@ -110,17 +110,17 @@
                 action=""
                 :auto-upload="false"
                 :show-file-list="false"
-                accept=".docx,.txt,.xls,.xlsx"
+                accept=".docx,.txt,.pdf,.xls,.xlsx"
                 :disabled="taskRunning"
                 :on-change="handleFileChange"
               >
-                <el-button icon="el-icon-upload2" type="primary" plain :loading="fileLoading" :disabled="taskRunning">选择试卷文档(docx/txt/xls/xlsx)</el-button>
+                <el-button icon="el-icon-upload2" type="primary" plain :loading="fileLoading" :disabled="taskRunning">选择试卷文档(docx/txt/pdf/xls/xlsx)</el-button>
               </el-upload>
               <el-upload
                 action=""
                 :auto-upload="false"
                 :show-file-list="false"
-                accept=".docx,.txt,.xls,.xlsx"
+                accept=".docx,.txt,.pdf,.xls,.xlsx"
                 :disabled="taskRunning"
                 :on-change="handleAnswerFileChange"
                 class="answer-upload"
@@ -535,9 +535,9 @@ export default {
 
       const fileName = rawFile.name || ''
       const lowerName = fileName.toLowerCase()
-      if (!lowerName.endsWith('.docx') && !lowerName.endsWith('.txt')
+      if (!lowerName.endsWith('.docx') && !lowerName.endsWith('.txt') && !lowerName.endsWith('.pdf')
           && !lowerName.endsWith('.xls') && !lowerName.endsWith('.xlsx')) {
-        this.$message.warning('只支持 docx、txt、xls、xlsx 文件')
+        this.$message.warning('只支持 docx、txt、pdf、xls、xlsx 文件')
         return
       }
 
@@ -566,8 +566,8 @@ export default {
 
       const fileName = rawFile.name || ''
       const lowerName = fileName.toLowerCase()
-      if (!lowerName.endsWith('.docx') && !lowerName.endsWith('.txt')) {
-        this.$message.warning('答案文档只支持 docx 和 txt 文件')
+      if (!lowerName.endsWith('.docx') && !lowerName.endsWith('.txt') && !lowerName.endsWith('.pdf')) {
+        this.$message.warning('答案文档只支持 docx、txt 和 pdf 文件')
         return
       }
 
