@@ -961,35 +961,84 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
     private String findSourceQuestionBlock(String sourceText, int questionIndex, String content) {
         List<String> blocks = splitQuestionBlocks(sourceText);
-        if (!CollectionUtils.isEmpty(blocks) && questionIndex > 0 && questionIndex <= blocks.size()) {
-            return blocks.get(questionIndex - 1);
-        }
-
-        String codeKey = firstCodeKey(content);
-        if (StringUtils.isBlank(codeKey) || CollectionUtils.isEmpty(blocks)) {
+        if (CollectionUtils.isEmpty(blocks)) {
             return "";
         }
-        for (String block : blocks) {
-            if (StringUtils.defaultString(block).contains(codeKey)) {
-                return block;
-            }
+        String matchedByCode = findSourceQuestionBlockByCode(blocks, content);
+        if (StringUtils.isNotBlank(matchedByCode)) {
+            return matchedByCode;
+        }
+
+        if (questionIndex > 0 && questionIndex <= blocks.size()) {
+            return blocks.get(questionIndex - 1);
         }
         return "";
     }
 
-    private String firstCodeKey(String text) {
-        if (StringUtils.isBlank(text)) {
+    private String findSourceQuestionBlockByCode(List<String> blocks, String content) {
+        List<String> keys = distinctiveCodeKeys(content);
+        if (CollectionUtils.isEmpty(keys)) {
             return "";
+        }
+        String bestBlock = "";
+        int bestScore = 0;
+        for (String block : blocks) {
+            String normalizedBlock = normalizeCodeKey(block);
+            int score = 0;
+            for (String key : keys) {
+                if (normalizedBlock.contains(key)) {
+                    score++;
+                }
+            }
+            if (score > bestScore) {
+                bestScore = score;
+                bestBlock = block;
+            }
+        }
+        return bestScore > 0 ? bestBlock : "";
+    }
+
+    private List<String> distinctiveCodeKeys(String text) {
+        List<String> keys = new ArrayList<>();
+        if (StringUtils.isBlank(text)) {
+            return keys;
         }
         String[] lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n");
         for (String line : lines) {
             String value = line.trim();
-            if (value.length() >= 8 && (value.contains("#include")
-                    || value.matches(".*\\b(main|printf|scanf|return|if|for|while)\\b.*"))) {
-                return value;
+            if (!isDistinctiveCodeLine(value)) {
+                continue;
+            }
+            String key = normalizeCodeKey(value);
+            if (StringUtils.isNotBlank(key)) {
+                keys.add(key);
             }
         }
-        return "";
+        return keys;
+    }
+
+    private boolean isDistinctiveCodeLine(String line) {
+        if (StringUtils.isBlank(line)) {
+            return false;
+        }
+        String value = line.trim();
+        if (value.length() < 8) {
+            return false;
+        }
+        if (value.startsWith("#include") || value.matches("^(int\\s+)?main\\s*\\(.*")) {
+            return false;
+        }
+        if (value.matches("^(return\\s+0\\s*;?|[{}]+)$")) {
+            return false;
+        }
+        return value.matches(".*\\b(scanf|printf|for|if|while)\\b.*")
+                || value.contains("?")
+                || value.contains("=")
+                || value.contains("%");
+    }
+
+    private String normalizeCodeKey(String text) {
+        return StringUtils.defaultString(text).replaceAll("\\s+", "");
     }
 
     private ProgramChoiceOptions extractProgramChoiceOptions(String content) {
