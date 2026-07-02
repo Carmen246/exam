@@ -32,10 +32,7 @@ public class QuestionImportBatchProcessor {
 
     public BatchProcessResult processBatch(String chunk, QuestionImportMode mode, QuestionParseReqDTO baseReq,
             String batchNo, QuestionImportBatchState state, boolean retrying) {
-        if (StringUtils.isBlank(chunk)) {
-            throw new ServiceException("批次文本为空");
-        }
-        if (QuestionBoundaryHelper.isAnswerSheetFragment(chunk)) {
+        if (StringUtils.isBlank(chunk) || QuestionBoundaryHelper.isIgnorableImportFragment(chunk)) {
             return BatchProcessResult.success(new ArrayList<>(), false);
         }
 
@@ -43,6 +40,9 @@ public class QuestionImportBatchProcessor {
 
         String localText = documentParseService.normalizeLocally(chunk);
         if (StringUtils.isBlank(localText)) {
+            if (QuestionBoundaryHelper.isIgnorableImportFragment(chunk)) {
+                return BatchProcessResult.success(new ArrayList<>(), false);
+            }
             throw new ServiceException("本地清洗后文本为空");
         }
 
@@ -66,6 +66,9 @@ public class QuestionImportBatchProcessor {
             }
             return BatchProcessResult.success(questions, false);
         } catch (Exception e) {
+            if (QuestionBoundaryHelper.isIgnorableImportFragment(chunk)) {
+                return BatchProcessResult.success(new ArrayList<>(), false);
+            }
             state.setPhase(QuestionImportBatchState.PHASE_DEEP_NORMALIZE);
             String deepText = questionAiParseService.normalizeSingleBatch(localText, batchNo);
             state.setPhase(retrying ? QuestionImportBatchState.PHASE_RETRY : QuestionImportBatchState.PHASE_PARSE);

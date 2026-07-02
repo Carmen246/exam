@@ -105,6 +105,49 @@ public final class QuestionBoundaryHelper {
     }
 
     /**
+     * 导入时可安全忽略的片段：大题/题型标题、答题纸等，不含实际题目。
+     */
+    public static boolean isIgnorableImportFragment(String block) {
+        return isAnswerSheetFragment(block) || isSectionHeaderOnlyFragment(block);
+    }
+
+    /**
+     * 仅含大题/题型标题、不含具体题目的片段（如「选择题一、单选题」）。
+     */
+    public static boolean isSectionHeaderOnlyFragment(String block) {
+        if (StringUtils.isBlank(block)) {
+            return true;
+        }
+        String value = block.replaceAll("\\s+", " ").trim();
+        if (hasRealQuestionContent(value)) {
+            return false;
+        }
+        if (value.matches("(?s).*\\d+[\\.．、]\\s+\\S.*")) {
+            return false;
+        }
+        if (value.matches("(?s).*[A-D][\\.、．]\\s*\\S.*")) {
+            return false;
+        }
+
+        if (value.matches("(?s).*(?:判断题|单选题|多选题|程序阅读题|程序设计题|程序填空题|填空题|编程题|程序改错题|综合应用题|阅读程序写结果题).*本大题共.*")) {
+            return true;
+        }
+
+        if (value.length() <= 100 && value.matches(
+                "^(?:得分\\s*)?(?:选择题)?[一二三四五六七八九十]+、\\s*"
+                        + "(?:判断题|多选题|单选题|填空题|程序填空题|程序阅读题|程序设计题|编程题|程序改错题|综合应用题|阅读程序写结果题).*$")) {
+            return true;
+        }
+
+        if (value.length() <= 40 && value.matches(
+                "^(?:得分\\s*)?(?:选择题|判断题|单选题|多选题|填空题|程序填空题|程序阅读题|程序设计题|编程题|程序改错题)$")) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * 题干末尾预填答案如「是 ( A )。」还原为空括号，避免清洗时误识别为选项。
      */
     public static String stripInlineFilledAnswer(String text) {
@@ -126,6 +169,9 @@ public final class QuestionBoundaryHelper {
             return true;
         }
         if (looksLikeSectionOnlyBlock(value)) {
+            return true;
+        }
+        if (isSectionHeaderOnlyFragment(value)) {
             return true;
         }
         if (looksLikeInstructionBlock(value)) {

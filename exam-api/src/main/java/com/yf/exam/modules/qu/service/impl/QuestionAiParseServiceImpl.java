@@ -521,8 +521,17 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
     private List<String> splitQuestionText(String text, int maxLength, int maxQuestionCount) {
         List<String> blocks = splitQuestionBlocks(text);
+        if (blocks.isEmpty()) {
+            if (QuestionBoundaryHelper.isIgnorableImportFragment(text)) {
+                return new ArrayList<>();
+            }
+            return filterIgnorableChunks(splitByLength(text, maxLength));
+        }
         if (blocks.size() <= 1) {
-            return splitByLength(text, maxLength);
+            if (QuestionBoundaryHelper.isIgnorableImportFragment(blocks.get(0))) {
+                return new ArrayList<>();
+            }
+            return filterIgnorableChunks(splitByLength(text, maxLength));
         }
 
         // Extract section headers with their positions from the original text,
@@ -553,8 +562,9 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
             // If this block IS a section header (not filtered by splitQuestionBlocks),
             // capture it and skip — don't treat it as a question.
-            if (SECTION_HEADER_LINE.matcher(value).find() && value.length() < 100
-                    && !value.matches("(?s).*\\d+[\\.．、]\\s*.*")) {
+            if (QuestionBoundaryHelper.isSectionHeaderOnlyFragment(value)
+                    || (SECTION_HEADER_LINE.matcher(value).find() && value.length() < 100
+                            && !value.matches("(?s).*\\d+[\\.．、]\\s*.*"))) {
                 currentSectionHeader = value.replaceFirst("^(?:得分\\s*)", "");
                 continue;
             }
@@ -611,7 +621,24 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         if (current.length() > 0) {
             chunks.add(current.toString().trim());
         }
-        return chunks;
+        return filterIgnorableChunks(chunks);
+    }
+
+    private List<String> filterIgnorableChunks(List<String> chunks) {
+        if (CollectionUtils.isEmpty(chunks)) {
+            return chunks;
+        }
+        List<String> filtered = new ArrayList<>();
+        for (String chunk : chunks) {
+            if (StringUtils.isBlank(chunk)) {
+                continue;
+            }
+            if (QuestionBoundaryHelper.isIgnorableImportFragment(chunk)) {
+                continue;
+            }
+            filtered.add(chunk);
+        }
+        return filtered;
     }
 
     /**
