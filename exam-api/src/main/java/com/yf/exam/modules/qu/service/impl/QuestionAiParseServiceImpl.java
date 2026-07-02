@@ -25,6 +25,7 @@ import org.springframework.util.CollectionUtils;
 import com.yf.exam.modules.qu.dto.QuestionImportReqDTO;
 import com.yf.exam.modules.qu.dto.QuestionImportRespDTO;
 import com.yf.exam.modules.qu.service.QuService;
+import com.yf.exam.modules.qu.support.AiCallErrorSupport;
 import com.yf.exam.modules.qu.support.FillProgramBlankOptionSupport;
 import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
 import com.yf.exam.modules.qu.support.ProgramContentFormatter;
@@ -55,7 +56,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     private static final int NORMALIZE_BATCH_QUESTION_COUNT = 20;
     private static final int PARSE_BATCH_QUESTION_COUNT = 2;
     private static final int FALLBACK_PARSE_BATCH_QUESTION_COUNT = 1;
-    private static final int AI_RETRY_TIMES = 2;
+    private static final int AI_RETRY_TIMES = 5;
+    private static final int AI_RETRY_TIMES_NON_TRANSIENT = 2;
 
     private static final Pattern CODE_START_PATTERN = Pattern.compile(
             "(?m)^\\s*(#include\\s|#import\\s|#define\\s|using\\s+\\w|void\\s+main|int\\s+main|"
@@ -101,6 +103,10 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     + "content中不要重复放选项。"
                     + "编程题(7)：content=仅题干，answerList[0]=完整参考程序，禁止把程序写进 content。"
                     + "程序改错题(8)：content=题干+有错程序，answerList=改正后程序；关键词“改错/改正/错误”。"
+                    + "小节标题如\"3 填空题\"\"5 编程题\"也决定题型：填空题小节一律 quType=5(程序填空题)，"
+                    + "即使代码看似有错也禁止改为8；编程题/书中例题小节一律 quType=7，"
+                    + "每个「例1_1」「例1_2」必须单独成题，禁止合并或跳过。"
+                    + "填空题小节中带完整程序的题必须在代码空位处用____标记，禁止跳过。"
                     + "程序代码必须保留换行与缩进，JSON 中用 \\n 表示换行。"
                     + "返回格式必须是："
                     + "{\"questions\":[{\"quType\":1,\"level\":1,\"content\":\"题干\","
@@ -269,6 +275,18 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 return normalizeTextOnce(text);
             } catch (ServiceException e) {
                 lastException = e;
+                if (shouldRetryAiCall(e, i)) {
+                    AiCallErrorSupport.sleepBeforeRetry(i);
+                    continue;
+                }
+                break;
+            } catch (Exception e) {
+                lastException = new ServiceException(AiCallErrorSupport.toUserMessage(e));
+                if (shouldRetryAiCall(e, i)) {
+                    AiCallErrorSupport.sleepBeforeRetry(i);
+                    continue;
+                }
+                break;
             }
         }
         throw new ServiceException("第" + batchNo + "批AI清洗失败：" + lastException.getMessage());
@@ -279,7 +297,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         messages.add(SystemMessage.from(NORMALIZE_SYSTEM_PROMPT));
         messages.add(UserMessage.from("待清洗试题文本：\n" + text));
 
-        Response<AiMessage> response = getChatModel().generate(messages);
+        Response<AiMessage> response = invokeAi(messages);
         String answer = readAiText(response);
         String json = extractJson(answer);
 
@@ -372,25 +390,15 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         return result;
     }
 
-    private static final Pattern QUESTION_NUMBER_LINE = Pattern.compile("(?m)^\\s*(\\d+)[\\.．、]\\s+");
+    private int countExpectedQuestionsInChunk(String chunk) {
+        List<String> blocks = splitQuestionBlocks(chunk);
+        return blocks == null ? 0 : blocks.size();
+    }
 
     private QuestionParseRespDTO parseQuestionsBatch(QuestionParseReqDTO sourceReq, String chunk, String batchNo) {
         try {
             QuestionParseRespDTO resp = parseQuestionsWithRetry(copyParseReq(sourceReq, chunk), batchNo);
-            // Safety check: if AI returned fewer questions than the number of question-numbered
-            // lines in the input, the response was likely truncated — trigger fallback split.
-            // Count lines starting with "N." (not section headers or instruction lines).
-            int expectedQuestions = 0;
-            Matcher qMatcher = QUESTION_NUMBER_LINE.matcher(chunk);
-            while (qMatcher.find()) {
-                // Skip instruction lines like "1.应将全部答案写在答卷纸"
-                String after = chunk.substring(qMatcher.start());
-                String lineEnd = after.contains("\n") ? after.substring(0, after.indexOf("\n")) : after;
-                if (!lineEnd.contains("应将全部答案") && !lineEnd.contains("编程题应写明")
-                        && !lineEnd.contains("考试完成后") && !lineEnd.contains("不要另添")) {
-                    expectedQuestions++;
-                }
-            }
+            int expectedQuestions = countExpectedQuestionsInChunk(chunk);
             if (expectedQuestions > 1 && resp.getQuestions().size() < expectedQuestions) {
                 throw new ServiceException("第" + batchNo + "批AI仅解析出" + resp.getQuestions().size()
                         + "题，但输入含" + expectedQuestions + "题，可能截断");
@@ -399,6 +407,12 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         } catch (ServiceException e) {
             List<String> smallerChunks = splitQuestionText(chunk, FALLBACK_PARSE_BATCH_LENGTH,
                     FALLBACK_PARSE_BATCH_QUESTION_COUNT);
+            if (smallerChunks.size() <= 1) {
+                List<String> blocks = splitQuestionBlocks(chunk);
+                if (blocks.size() > 1) {
+                    smallerChunks = blocks;
+                }
+            }
             if (smallerChunks.size() <= 1) {
                 throw new ServiceException("第" + batchNo + "批AI解析失败：" + e.getMessage());
             }
@@ -433,6 +447,18 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 return parseQuestionsOnce(reqDTO);
             } catch (ServiceException e) {
                 lastException = e;
+                if (shouldRetryAiCall(e, i)) {
+                    AiCallErrorSupport.sleepBeforeRetry(i);
+                    continue;
+                }
+                break;
+            } catch (Exception e) {
+                lastException = new ServiceException(AiCallErrorSupport.toUserMessage(e));
+                if (shouldRetryAiCall(e, i)) {
+                    AiCallErrorSupport.sleepBeforeRetry(i);
+                    continue;
+                }
+                break;
             }
         }
         throw new ServiceException("第" + batchNo + "批AI解析失败：" + lastException.getMessage());
@@ -450,7 +476,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         ));
         messages.add(UserMessage.from(buildUserPrompt(reqDTO)));
 
-        Response<AiMessage> response = getChatModel().generate(messages);
+        Response<AiMessage> response = invokeAi(messages);
         String answer = readAiText(response);
         String json = extractJson(answer);
 
@@ -465,6 +491,24 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         respDTO.setRawJson(json);
         respDTO.setCount(respDTO.getQuestions().size());
         return respDTO;
+    }
+
+    private Response<AiMessage> invokeAi(List<ChatMessage> messages) {
+        try {
+            return getChatModel().generate(messages);
+        } catch (Exception e) {
+            throw new ServiceException(AiCallErrorSupport.toUserMessage(e));
+        }
+    }
+
+    private boolean shouldRetryAiCall(Throwable error, int attempt) {
+        if (attempt >= AI_RETRY_TIMES) {
+            return false;
+        }
+        if (AiCallErrorSupport.isTransientError(error)) {
+            return true;
+        }
+        return attempt < AI_RETRY_TIMES_NON_TRANSIENT;
     }
 
     private ChatLanguageModel getChatModel() {
@@ -539,12 +583,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         String normalized = text.replace("\r\n", "\n").replace("\r", "\n");
         List<String> sectionHeaders = new ArrayList<>();
         List<Integer> sectionPositions = new ArrayList<>();
-        Matcher hm = SECTION_HEADER_LINE.matcher(normalized);
-        while (hm.find()) {
-            String header = hm.group().trim().replaceFirst("^(?:得分\\s*)", "");
-            sectionHeaders.add(header);
-            sectionPositions.add(hm.start());
-        }
+        collectSectionMarkers(normalized, sectionHeaders, sectionPositions);
 
         List<String> chunks = new ArrayList<>();
         StringBuilder current = new StringBuilder();
@@ -567,6 +606,10 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                             && !value.matches("(?s).*\\d+[\\.．、]\\s*.*"))) {
                 currentSectionHeader = value.replaceFirst("^(?:得分\\s*)", "");
                 continue;
+            }
+            String compactSection = extractCompactSectionHeader(value);
+            if (StringUtils.isNotBlank(compactSection)) {
+                currentSectionHeader = compactSection;
             }
 
             // Determine which section this block belongs to by finding its
@@ -613,6 +656,10 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
             if (current.length() > 0) {
                 current.append("\n\n");
+            } else if (StringUtils.isNotBlank(currentSectionHeader)
+                    && !currentSectionHeader.equals(chunkSectionHeader)) {
+                chunkSectionHeader = currentSectionHeader;
+                current.append(chunkSectionHeader).append("\n\n");
             }
             current.append(value);
             questionCount++;
@@ -622,6 +669,87 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             chunks.add(current.toString().trim());
         }
         return filterIgnorableChunks(chunks);
+    }
+
+    private void collectSectionMarkers(String text, List<String> headers, List<Integer> positions) {
+        List<int[]> markers = new ArrayList<>();
+        Matcher formalMatcher = SECTION_HEADER_LINE.matcher(text);
+        while (formalMatcher.find()) {
+            markers.add(new int[] {formalMatcher.start(),
+                    0});
+            headers.add(null);
+        }
+        Matcher compactMatcher = QuestionBoundaryHelper.COMPACT_SECTION_LINE.matcher(text);
+        while (compactMatcher.find()) {
+            markers.add(new int[] {compactMatcher.start(), 1});
+            headers.add(null);
+        }
+        markers.sort(java.util.Comparator.comparingInt(a -> a[0]));
+        headers.clear();
+        positions.clear();
+        for (int[] marker : markers) {
+            if (marker[1] == 0) {
+                Matcher m = SECTION_HEADER_LINE.matcher(text);
+                if (m.find(marker[0])) {
+                    headers.add(m.group().trim().replaceFirst("^(?:得分\\s*)", ""));
+                    positions.add(m.start());
+                }
+            } else {
+                Matcher m = QuestionBoundaryHelper.COMPACT_SECTION_LINE.matcher(text);
+                if (m.find(marker[0])) {
+                    headers.add(m.group().trim());
+                    positions.add(m.start());
+                }
+            }
+        }
+    }
+
+    private String extractCompactSectionHeader(String block) {
+        if (StringUtils.isBlank(block)) {
+            return "";
+        }
+        Matcher matcher = QuestionBoundaryHelper.COMPACT_SECTION_LINE.matcher(block);
+        if (matcher.find()) {
+            return matcher.group().trim();
+        }
+        return "";
+    }
+
+    private void applySectionQuType(QuDetailDTO qu, String batchText) {
+        if (qu == null || StringUtils.isBlank(batchText)) {
+            return;
+        }
+        String section = QuestionBoundaryHelper.findLeadingSectionType(batchText);
+        Integer sectionType = QuestionBoundaryHelper.inferQuTypeFromSection(section);
+        if (sectionType == null) {
+            return;
+        }
+        if (QuType.FILL_PROGRAM.equals(sectionType)) {
+            if (!QuestionBoundaryHelper.isExplicitFixProgramCue(qu.getContent())) {
+                qu.setQuType(QuType.FILL_PROGRAM);
+            }
+            return;
+        }
+        if (QuType.PROGRAM.equals(sectionType)) {
+            qu.setQuType(QuType.PROGRAM);
+            return;
+        }
+        if (QuType.READ_PROGRAM.equals(sectionType)) {
+            qu.setQuType(QuType.READ_PROGRAM);
+            return;
+        }
+        if (QuType.isObjective(sectionType)) {
+            qu.setQuType(sectionType);
+        }
+    }
+
+    private void sanitizeQuestionContent(QuDetailDTO qu) {
+        if (qu == null || StringUtils.isBlank(qu.getContent())) {
+            return;
+        }
+        String content = qu.getContent().trim();
+        content = content.replaceAll("^(题干\\s*)+", "");
+        qu.setContent(content);
     }
 
     private List<String> filterIgnorableChunks(List<String> chunks) {
@@ -690,6 +818,11 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         return "请把下面的试题文本解析为在线考试系统可导入的 json。\n"
                 + "要求：\n"
                 + "1. 只能按原题型解析，不要把填空题/编程题改造成选择题。\n"
+                + "1a. 小节标题如「3 填空题」「5 编程题」决定题型：填空题小节一律 quType=5(程序填空题)，"
+                + "即使代码看似有错也禁止 quType=8；编程题/书中例题小节一律 quType=7；"
+                + "「例1_1」「例1_2」等书中例题每例必须单独输出一题。\n"
+                + "1b. 「3 填空题」小节中带完整程序的题：在需填写的语句/条件/表达式处用 ____ 标记，"
+                + "answerList 按顺序存各空答案，禁止整题当作改错题。\n"
                 + "2. 单选题 quType=1，只能有一个正确答案。\n"
                 + "3. 多选题 quType=2，至少有一个正确答案。\n"
                 + "4. 判断题 quType=3，选项固定为：正确、错误。\n"
@@ -735,8 +868,9 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 + "16. 程序代码保留换行，JSON 中用 \\n 表示换行。必须原样保留C代码中的每一个字符，"
                 + "不得修改、替换或省略任何符号，特别是三目运算符?和:、比较运算符>=/<=/!=/==、"
                 + "逻辑运算符&&/||/!、位运算符&/|/^、指针*和->、取地址&等。\n"
-                + "17. 不要编造题目，无法识别的题目不要输出。\n"
-                + "18. 上一题选项(如D. area)与下一题题干(如下面程序的功能...)属于不同题目，不要合并。\n\n"
+                + "17. 不要编造题目；填空题小节不得跳过；书中例题「例X_Y」每例单独输出。\n"
+                + "18. 上一题选项(如D. area)与下一题题干(如下面程序的功能...)属于不同题目，不要合并。\n"
+                + "19. content 不要写「题干」二字，直接写题目正文。\n\n"
                 + "原始文本：\n"
                 + reqDTO.getText();
     }
@@ -794,6 +928,9 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             if (CollectionUtils.isEmpty(qu.getRepoIds())) {
                 qu.setRepoIds(reqDTO.getRepoIds());
             }
+
+            applySectionQuType(qu, reqDTO.getText());
+            sanitizeQuestionContent(qu);
 
             normalizeObjectiveChoiceQuestion(qu, reqDTO.getText(), index);
             normalizeProgramChoiceQuestion(qu, reqDTO.getText(), index);

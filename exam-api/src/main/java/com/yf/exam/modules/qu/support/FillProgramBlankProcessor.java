@@ -34,9 +34,10 @@ public class FillProgramBlankProcessor {
     /** 已有 ____ 占位 */
     private static final Pattern EXISTING_BLANK = Pattern.compile("_{3,}");
 
-    /** if/else if/while 条件中的潜在填空 */
+    /** if/else if/while/for 条件中的潜在填空 */
     private static final Pattern CONDITION_BLANK = Pattern.compile(
-            "(?:\\bif|\\belse\\s+if|\\bwhile)\\s*\\(\\s*([^)]+?)\\s*\\)");
+            "(?:\\bif|\\belse\\s+if|\\bwhile)\\s*\\(\\s*([^)]+?)\\s*\\)|"
+                    + "\\bfor\\s*\\([^;]*;\\s*([^;]+?)\\s*;");
 
     public static class BlankSlot {
         private final String content;
@@ -127,7 +128,11 @@ public class FillProgramBlankProcessor {
         }
         Matcher matcher = CONDITION_BLANK.matcher(code);
         while (matcher.find()) {
-            String condition = matcher.group(1).trim();
+            String condition = matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
+            if (condition == null) {
+                continue;
+            }
+            condition = condition.trim();
             if (StringUtils.isBlank(condition) || condition.contains(BLANK)) {
                 continue;
             }

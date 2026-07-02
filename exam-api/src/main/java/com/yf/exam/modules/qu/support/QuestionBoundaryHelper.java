@@ -15,8 +15,13 @@ public final class QuestionBoundaryHelper {
     private static final Pattern NUMBERED_QUESTION_START = Pattern.compile("(?m)(?=^\\s*\\d+[\\.．、]\\s*)");
 
     private static final Pattern STEM_QUESTION_START = Pattern.compile(
-            "(?m)(?=^\\s*(得分|[一二三四五六七八九十]+、|程序填空题|程序阅读题|程序设计题|判断题|单选题|多选题|"
-                    + "以下函数|以下程序|下面函数|下面程序的功能|阅读程序|编写程序|输出以下|程序改错|改正下面的程序))");
+            "(?m)(?=^\\s*(得分|[一二三四五六七八九十]+、|程序填空题|程序阅读题|程序设计题|判断题|单选题|多选题|填空题|"
+                    + "以下函数|以下程序|下面函数|下面的程序|下面程序的功能|阅读程序|编写程序|输出以下|程序改错|改正下面的程序|"
+                    + "例\\s*\\d+[_．.]\\d+))");
+
+    /** 如「3 填空题」「5 编程题」 */
+    public static final Pattern COMPACT_SECTION_LINE = Pattern.compile(
+            "(?m)^\\s*\\d+\\s*(?:选择题|判断题|单选题|多选题|填空题|程序填空题|程序阅读题|程序设计题|编程题|阅读题)\\s*$");
 
     private static final Pattern GLUED_OPTION_TO_STEM = Pattern.compile(
             "(?m)([A-D]\\.\\s*[^\\n]*?)(以下函数|以下程序|下面函数|下面程序的功能|阅读程序|编写程序|输出以下|程序改错|改正下面的程序)");
@@ -30,6 +35,9 @@ public final class QuestionBoundaryHelper {
     private static final Pattern GLUED_OPTION_TO_SECTION = Pattern.compile(
             "(?m)([A-D]\\.\\s*[^\\n]*?)(\\s*得分\\s*(?:[一二三四五六七八九十]+、)?\\s*"
                     + "(?:程序填空题|程序阅读题|程序设计题|判断题|单选题|多选题))");
+
+    private static final Pattern GLUED_TEXT_TO_EXAMPLE = Pattern.compile(
+            "(?<!\\n)(例\\s*\\d+[_．.]\\d+)");
 
     private static final Pattern UNNUMBERED_CHOICE_STEM = Pattern.compile(
             "(?m)(?=^\\s*(?:[\\u4e00-\\u9fa5]|[A-Za-z_][A-Za-z0-9_]*\\s*\\([^\\n)]*\\)\\s*函数)"
@@ -47,6 +55,7 @@ public final class QuestionBoundaryHelper {
         value = GLUED_OPTION_TO_NUMBERED_STEM.matcher(value).replaceAll("$1\n$2");
         value = GLUED_OPTION_TO_UNNUMBERED_STEM.matcher(value).replaceAll("$1\n$2");
         value = GLUED_OPTION_TO_SECTION.matcher(value).replaceAll("$1\n$2");
+        value = GLUED_TEXT_TO_EXAMPLE.matcher(value).replaceAll("\n$1");
         return value;
     }
 
@@ -144,6 +153,10 @@ public final class QuestionBoundaryHelper {
             return true;
         }
 
+        if (value.matches("^\\d+\\s*(?:选择题|判断题|单选题|多选题|填空题|程序填空题|程序阅读题|程序设计题|编程题|阅读题)$")) {
+            return true;
+        }
+
         return false;
     }
 
@@ -155,6 +168,68 @@ public final class QuestionBoundaryHelper {
             return text;
         }
         return text.replaceAll("(?m)([\\u4e00-\\u9fa5])\\s*[（(]\\s*([A-D])\\s*[)）]\\s*([。．.])?", "$1（ ）$3");
+    }
+
+    /**
+     * 从批次文本开头提取大题/小节标题（如「3 填空题」）。
+     */
+    public static String findLeadingSectionType(String text) {
+        if (StringUtils.isBlank(text)) {
+            return null;
+        }
+        for (String line : text.replace("\r\n", "\n").replace("\r", "\n").split("\n")) {
+            String trimmed = line.trim();
+            if (StringUtils.isBlank(trimmed)) {
+                continue;
+            }
+            if (isSectionHeaderOnlyFragment(trimmed)) {
+                return trimmed.replaceAll("\\s+", " ");
+            }
+            if (trimmed.matches("(?s).*\\d+[\\.．、]\\s*\\S.*") || trimmed.matches("^例\\s*\\d+[_．.]\\d+.*")) {
+                break;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 根据小节标题推断题型；「3 填空题」等一律映射为程序填空题。
+     */
+    public static Integer inferQuTypeFromSection(String sectionHeader) {
+        if (StringUtils.isBlank(sectionHeader)) {
+            return null;
+        }
+        String section = sectionHeader.replaceAll("\\s+", "");
+        if (section.contains("程序改错题")) {
+            return 8;
+        }
+        if (section.contains("填空题")) {
+            return 5;
+        }
+        if (section.contains("阅读题") || section.contains("阅读程序")) {
+            return 6;
+        }
+        if (section.contains("编程题") || section.contains("程序设计题")) {
+            return 7;
+        }
+        if (section.contains("判断题")) {
+            return 3;
+        }
+        if (section.contains("多选题")) {
+            return 2;
+        }
+        if (section.contains("单选题") || section.contains("选择题")) {
+            return 1;
+        }
+        return null;
+    }
+
+    public static boolean isExplicitFixProgramCue(String text) {
+        if (StringUtils.isBlank(text)) {
+            return false;
+        }
+        return text.contains("改错") || text.contains("改正") || text.contains("找出错误")
+                || text.contains("请修改") || text.contains("有错程序");
     }
 
     public static boolean isNonQuestionFragment(String block) {
@@ -404,9 +479,10 @@ public final class QuestionBoundaryHelper {
         if (looksLikeUnnumberedChoiceStem(value)) {
             return true;
         }
-        return value.matches("^\\d+\\.\\s*.*")
-                || value.matches("^(得分|[一二三四五六七八九十]+、|程序填空题|程序阅读题|程序设计题|判断题|单选题|多选题).*")
-                || value.matches("^(以下函数|以下程序|下面函数|下面程序的功能|阅读程序|编写程序|输出以下|程序改错|改正下面的程序).*");
+        return value.matches("^\\d+[\\.．、]\\s*.*")
+                || value.matches("^(得分|[一二三四五六七八九十]+、|程序填空题|程序阅读题|程序设计题|判断题|单选题|多选题|填空题).*")
+                || value.matches("^(以下函数|以下程序|下面函数|下面的程序|下面程序的功能|阅读程序|编写程序|输出以下|程序改错|改正下面的程序).*")
+                || value.matches("^例\\s*\\d+[_．.]\\d+.*");
     }
 
     private static boolean looksLikeUnnumberedChoiceStem(String value) {

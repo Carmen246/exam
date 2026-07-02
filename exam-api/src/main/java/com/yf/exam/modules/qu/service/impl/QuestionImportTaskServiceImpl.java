@@ -19,6 +19,7 @@ import com.yf.exam.modules.qu.service.QuestionDocumentParseService;
 import com.yf.exam.modules.qu.service.QuestionImportTaskService;
 import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
 import com.yf.exam.modules.qu.support.QuestionAnswerDocumentMerger;
+import com.yf.exam.modules.qu.support.AiCallErrorSupport;
 import com.yf.exam.modules.qu.support.QuestionBoundaryHelper;
 import com.yf.exam.modules.qu.support.QuestionExcelImportParser;
 import lombok.extern.slf4j.Slf4j;
@@ -348,7 +349,9 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
                             deepCleanCount.incrementAndGet();
                         }
                     } catch (Exception e) {
-                        String message = e instanceof ServiceException ? e.getMessage() : e.getMessage();
+                        String message = e instanceof ServiceException
+                                ? e.getMessage()
+                                : AiCallErrorSupport.toUserMessage(e);
                         state.markFailed(message);
                     }
                     refreshBatchProgress(task, batchStates, deepCleanCount.get());
