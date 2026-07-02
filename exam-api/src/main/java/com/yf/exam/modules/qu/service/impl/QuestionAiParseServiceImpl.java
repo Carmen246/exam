@@ -827,6 +827,9 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             code = content;
             stem = "";
         }
+        if (StringUtils.isBlank(code) && StringUtils.isNotBlank(programFromAnswer)) {
+            code = programFromAnswer;
+        }
 
         FillProgramBlankProcessor.ProcessResult processed = fillProgramBlankProcessor.process(code, aiAnswers);
         code = programContentFormatter.formatProgramCode(processed.getCode());
@@ -922,7 +925,10 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         ProgramChoiceOptions options = extractObjectiveChoiceOptions(qu.getContent());
         String sourceBlock = "";
         if (options == null || options.answers.size() <= currentAnswerCount(qu.getAnswerList())) {
-            sourceBlock = findSourceQuestionBlock(sourceText, questionIndex, qu.getContent());
+            sourceBlock = findSourceQuestionBlockByAnswer(sourceText, qu.getAnswerList());
+            if (StringUtils.isBlank(sourceBlock)) {
+                sourceBlock = findSourceQuestionBlock(sourceText, questionIndex, qu.getContent());
+            }
             ProgramChoiceOptions sourceOptions = extractObjectiveChoiceOptions(sourceBlock);
             if (sourceOptions != null && (options == null || sourceOptions.answers.size() > options.answers.size())) {
                 options = sourceOptions;
@@ -1002,6 +1008,70 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             }
         }
         return indexes;
+    }
+
+    private String findSourceQuestionBlockByAnswer(String sourceText, List<QuAnswerDTO> answers) {
+        List<String> expectedAnswers = rightAnswerContentsForSourceMatch(answers);
+        if (StringUtils.isBlank(sourceText) || expectedAnswers.isEmpty()) {
+            return "";
+        }
+
+        List<String> blocks = splitQuestionBlocks(sourceText);
+        if (CollectionUtils.isEmpty(blocks)) {
+            return "";
+        }
+
+        String bestBlock = "";
+        int bestScore = 0;
+        for (String block : blocks) {
+            ProgramChoiceOptions options = extractObjectiveChoiceOptions(block);
+            if (options == null || CollectionUtils.isEmpty(options.answers)) {
+                continue;
+            }
+
+            int score = 0;
+            for (String expected : expectedAnswers) {
+                if (findMatchingOptionContentIndex(options.answers, expected) >= 0) {
+                    score++;
+                }
+            }
+            if (score > bestScore) {
+                bestScore = score;
+                bestBlock = block;
+            }
+        }
+        return bestScore > 0 ? bestBlock : "";
+    }
+
+    private List<String> rightAnswerContentsForSourceMatch(List<QuAnswerDTO> answers) {
+        List<String> result = new ArrayList<>();
+        if (CollectionUtils.isEmpty(answers)) {
+            return result;
+        }
+        for (QuAnswerDTO answer : answers) {
+            if (answer == null || !Boolean.TRUE.equals(answer.getIsRight())) {
+                continue;
+            }
+            String content = StringUtils.defaultString(answer.getContent()).trim();
+            if (StringUtils.isBlank(content) || optionLetterIndex(content) >= 0) {
+                continue;
+            }
+            result.add(content);
+        }
+        return result;
+    }
+
+    private int findMatchingOptionContentIndex(List<String> options, String expectedAnswer) {
+        if (CollectionUtils.isEmpty(options) || StringUtils.isBlank(expectedAnswer)) {
+            return -1;
+        }
+        String normalizedExpected = normalizeChoiceText(expectedAnswer);
+        for (int i = 0; i < options.size(); i++) {
+            if (StringUtils.equals(normalizeChoiceText(options.get(i)), normalizedExpected)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private List<Integer> findAnswerLetterIndexesInText(String text, int optionCount) {

@@ -18,6 +18,7 @@ import com.yf.exam.modules.qu.entity.QuAnswer;
 import com.yf.exam.modules.qu.entity.QuRepo;
 import com.yf.exam.modules.qu.enums.QuType;
 import com.yf.exam.modules.qu.support.FillProgramBlankOptionSupport;
+import com.yf.exam.modules.qu.support.ProgramContentFormatter;
 import com.yf.exam.modules.qu.mapper.QuMapper;
 import com.yf.exam.modules.qu.service.QuAnswerService;
 import com.yf.exam.modules.qu.service.QuRepoService;
@@ -55,6 +56,9 @@ public class QuServiceImpl extends ServiceImpl<QuMapper, Qu> implements QuServic
 
     @Autowired
     private ImageCheckUtils imageCheckUtils;
+
+    @Autowired
+    private ProgramContentFormatter programContentFormatter;
 
     @Override
     public IPage<QuDTO> paging(PagingReqDTO<QuQueryReqDTO> reqDTO) {
@@ -410,10 +414,7 @@ public class QuServiceImpl extends ServiceImpl<QuMapper, Qu> implements QuServic
     }
 
     private boolean containsCodeBlock(String text) {
-        if (StringUtils.isEmpty(text)) {
-            return false;
-        }
-        return text.matches("(?s).*(#include|#define|void\\s+main|int\\s+main|int\\s+\\w+\\s*\\(|public\\s+class|def\\s+\\w+\\(|function\\s+\\w+\\().*");
+        return programContentFormatter.containsCodeBlock(text);
     }
 
     private boolean isReadProgramChoiceAnswers(List<QuAnswerDTO> answers) {

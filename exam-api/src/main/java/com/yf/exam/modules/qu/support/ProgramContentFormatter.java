@@ -17,6 +17,13 @@ public class ProgramContentFormatter {
                     + "(?:int|char|void|float|double|long|short|unsigned)\\s+\\w+\\s*(?:=|\\()|"
                     + "main\\s*\\()");
 
+    /** 题干与代码未分行时，回退为全文搜索代码特征 */
+    private static final Pattern CODE_ANYWHERE_PATTERN = Pattern.compile(
+            "#include\\s|#define\\s|"
+                    + "void\\s+main\\s*\\(|int\\s+main\\s*\\(|main\\s*\\(|"
+                    + "(?:public\\s+class|def\\s+\\w+\\s*\\(|function\\s+\\w+\\s*\\()|"
+                    + "(?:int|char|void|float|double|long|short|unsigned)\\s+\\w+\\s*(?:=|\\()");
+
     private static final Pattern RUN_RESULT_SUFFIX = Pattern.compile("运行结果\\s*[:：]\\s*.+$");
     private static final Pattern INLINE_INSTRUCTION = Pattern.compile("阅读程序[，,]?\\s*|写出运行结果[。.]?\\s*");
 
@@ -126,6 +133,10 @@ public class ProgramContentFormatter {
         return expanded;
     }
 
+    public boolean containsCodeBlock(String text) {
+        return findCodeBlockStart(text) >= 0;
+    }
+
     public int findCodeBlockStart(String text) {
         if (StringUtils.isBlank(text)) {
             return -1;
@@ -134,7 +145,7 @@ public class ProgramContentFormatter {
         if (matcher.find()) {
             return matcher.start();
         }
-        String[] markers = {"#include", "void main", "int main", "main()", "main (", "public class"};
+        String[] markers = {"#include", "#define", "void main", "int main", "main()", "main (", "public class"};
         int earliest = -1;
         for (String marker : markers) {
             int idx = indexOfAtLineStart(text, marker);
@@ -142,7 +153,14 @@ public class ProgramContentFormatter {
                 earliest = idx;
             }
         }
-        return earliest;
+        if (earliest >= 0) {
+            return earliest;
+        }
+        Matcher anywhere = CODE_ANYWHERE_PATTERN.matcher(text);
+        if (anywhere.find()) {
+            return anywhere.start();
+        }
+        return -1;
     }
 
     private int indexOfAtLineStart(String text, String marker) {
