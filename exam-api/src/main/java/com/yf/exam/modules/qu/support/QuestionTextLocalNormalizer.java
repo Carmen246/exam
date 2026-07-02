@@ -25,7 +25,8 @@ public class QuestionTextLocalNormalizer {
         text = text.replace("\u3000", " ");
         text = text.replace("．", ".");
         text = QuestionBoundaryHelper.separateGluedBoundaries(text);
-        text = text.replaceAll("\\s+([A-Ha-h])\\s*[\\.、)\\）]\\s*", "\n$1. ");
+        text = QuestionBoundaryHelper.stripInlineFilledAnswer(text);
+        text = text.replaceAll("\\s+([A-Ha-h])\\s*[\\.、]\\s*", "\n$1. ");
         text = text.replaceAll("\\s+(答案|参考答案)\\s*[:：]\\s*", "\n答案：");
 
         String[] rawLines = text.split("\n");
@@ -33,7 +34,13 @@ public class QuestionTextLocalNormalizer {
 
         for (String rawLine : rawLines) {
             String line = normalizeLine(rawLine);
-            if (StringUtils.isBlank(line)) {
+            if (StringUtils.isBlank(line) || isPhantomOptionLine(line)) {
+                continue;
+            }
+
+            if (!lines.isEmpty() && isBareOptionLabel(lines.get(lines.size() - 1))) {
+                int lastIndex = lines.size() - 1;
+                lines.set(lastIndex, mergeLine(lines.get(lastIndex), line));
                 continue;
             }
 
@@ -70,7 +77,7 @@ public class QuestionTextLocalNormalizer {
         if (!QuestionBoundaryHelper.isBlankSubNumberLine(value)) {
             value = value.replaceAll("^(\\d+)\\s*[\\.、]\\s*", "$1. ");
         }
-        value = value.replaceAll("^([A-Ha-h])\\s*[\\.、)\\）]\\s*", "$1. ");
+        value = value.replaceAll("^([A-Ha-h])\\s*[\\.、]\\s*", "$1. ");
         value = value.replaceAll("^(答案|参考答案)\\s*[:：]?\\s*", "答案：");
         value = removeOptionTailIndex(value);
         return value.trim();
@@ -113,6 +120,14 @@ public class QuestionTextLocalNormalizer {
             }
         }
         return value;
+    }
+
+    private boolean isPhantomOptionLine(String line) {
+        return line != null && line.trim().matches("^[A-D]\\.\\s*[。．.]$");
+    }
+
+    private boolean isBareOptionLabel(String line) {
+        return line != null && line.trim().matches("^[A-D]\\.\\s*$");
     }
 
     private String mergeLine(String previous, String current) {

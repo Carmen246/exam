@@ -62,7 +62,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     + "public\\s+class|class\\s+\\w+|def\\s+\\w|function\\s+\\w|package\\s+\\w|"
                     + "(?:int|char|void|float|double|long|short|unsigned)\\s+\\w+\\s*\\()");
     private static final Pattern INLINE_OPTION_PATTERN = Pattern.compile(
-            "(?s)([A-D])\\s*[\\.、．]\\s*(.*?)(?=\\s+[A-D]\\s*[\\.、．]\\s*|$)");
+            "(?s)([A-D])\\s*[\\.、．]\\s*(.*?)(?=(?:\\s+)?[A-D]\\s*[\\.、．]\\s*|$)");
 
     private static final String SYSTEM_PROMPT =
             "你是在线考试系统的试题解析器。你只能返回合法 json，不要返回 Markdown，不要解释，不要使用代码块。"
@@ -749,6 +749,9 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
         int index = 1;
         for (QuDetailDTO qu : respDTO.getQuestions()) {
+            if (StringUtils.isNotBlank(qu.getContent())) {
+                qu.setContent(QuestionBoundaryHelper.stripInlineFilledAnswer(qu.getContent()));
+            }
             if (qu.getLevel() == null) {
                 qu.setLevel(reqDTO.getLevel() == null ? 1 : reqDTO.getLevel());
             }
@@ -924,17 +927,18 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
         ProgramChoiceOptions options = extractObjectiveChoiceOptions(qu.getContent());
         String sourceBlock = "";
-        if (options == null || options.answers.size() <= currentAnswerCount(qu.getAnswerList())) {
+        if (options == null || countNonBlankOptions(options.answers) <= countNonBlankAnswers(qu.getAnswerList())) {
             sourceBlock = findSourceQuestionBlockByAnswer(sourceText, qu.getAnswerList());
             if (StringUtils.isBlank(sourceBlock)) {
                 sourceBlock = findSourceQuestionBlock(sourceText, questionIndex, qu.getContent());
             }
             ProgramChoiceOptions sourceOptions = extractObjectiveChoiceOptions(sourceBlock);
-            if (sourceOptions != null && (options == null || sourceOptions.answers.size() > options.answers.size())) {
+            if (sourceOptions != null && isBetterOptionSet(sourceOptions, options)) {
                 options = sourceOptions;
             }
         }
-        if (options == null || options.answers.size() < 2) {
+        if (options == null || countNonBlankOptions(options.answers) < 2) {
+            enrichAnswerListFromSource(qu, sourceText, questionIndex);
             return;
         }
 
@@ -955,42 +959,138 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         List<QuAnswerDTO> answerList = new ArrayList<>();
         for (int i = 0; i < options.answers.size(); i++) {
             QuAnswerDTO answer = new QuAnswerDTO();
-            answer.setContent(options.answers.get(i));
+            String extracted = StringUtils.defaultString(options.answers.get(i)).trim();
+            QuAnswerDTO existing = getExistingAnswer(qu.getAnswerList(), i);
+            if (StringUtils.isBlank(extracted) && existing != null) {
+                extracted = StringUtils.defaultString(existing.getContent()).trim();
+            }
+            answer.setContent(extracted);
             answer.setIsRight(rightIndexes.contains(i));
             answer.setImage("");
-            answer.setAnalysis("");
+            answer.setAnalysis(existing != null ? StringUtils.defaultString(existing.getAnalysis()) : "");
             answerList.add(answer);
         }
 
         qu.setContent(formatObjectiveChoiceStem(options.stemCode));
         qu.setAnswerList(answerList);
+        enrichAnswerListFromSource(qu, sourceText, questionIndex);
     }
 
-    private int currentAnswerCount(List<QuAnswerDTO> answers) {
-        return answers == null ? 0 : answers.size();
+    private QuAnswerDTO getExistingAnswer(List<QuAnswerDTO> answers, int index) {
+        if (CollectionUtils.isEmpty(answers) || index < 0 || index >= answers.size()) {
+            return null;
+        }
+        return answers.get(index);
+    }
+
+    private int countNonBlankAnswers(List<QuAnswerDTO> answers) {
+        if (CollectionUtils.isEmpty(answers)) {
+            return 0;
+        }
+        int count = 0;
+        for (QuAnswerDTO answer : answers) {
+            if (answer != null && StringUtils.isNotBlank(answer.getContent())) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private int countNonBlankOptions(List<String> options) {
+        if (CollectionUtils.isEmpty(options)) {
+            return 0;
+        }
+        int count = 0;
+        for (String option : options) {
+            if (StringUtils.isNotBlank(option)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private boolean isBetterOptionSet(ProgramChoiceOptions candidate, ProgramChoiceOptions current) {
+        if (candidate == null) {
+            return false;
+        }
+        if (current == null) {
+            return true;
+        }
+        int candidateFilled = countNonBlankOptions(candidate.answers);
+        int currentFilled = countNonBlankOptions(current.answers);
+        if (candidateFilled != currentFilled) {
+            return candidateFilled > currentFilled;
+        }
+        return candidate.answers.size() > current.answers.size();
+    }
+
+    private void enrichAnswerListFromSource(QuDetailDTO qu, String sourceText, int questionIndex) {
+        if (CollectionUtils.isEmpty(qu.getAnswerList()) || StringUtils.isBlank(sourceText)) {
+            return;
+        }
+        String sourceBlock = findSourceQuestionBlockByAnswer(sourceText, qu.getAnswerList());
+        if (StringUtils.isBlank(sourceBlock)) {
+            sourceBlock = findSourceQuestionBlock(sourceText, questionIndex, qu.getContent());
+        }
+        ProgramChoiceOptions sourceOptions = extractObjectiveChoiceOptions(sourceBlock);
+        if (sourceOptions == null) {
+            return;
+        }
+        fillBlankAnswersFromOptions(qu.getAnswerList(), sourceOptions.answers);
+    }
+
+    private void fillBlankAnswersFromOptions(List<QuAnswerDTO> answers, List<String> options) {
+        if (CollectionUtils.isEmpty(answers) || CollectionUtils.isEmpty(options)) {
+            return;
+        }
+        int limit = Math.min(answers.size(), options.size());
+        for (int i = 0; i < limit; i++) {
+            QuAnswerDTO answer = answers.get(i);
+            if (answer == null || StringUtils.isNotBlank(answer.getContent())) {
+                continue;
+            }
+            if (StringUtils.isNotBlank(options.get(i))) {
+                answer.setContent(options.get(i));
+            }
+        }
     }
 
     private ProgramChoiceOptions extractObjectiveChoiceOptions(String content) {
         String text = StringUtils.defaultString(content).trim();
-        Matcher firstOption = Pattern.compile("(?s)(?:^|\\s)A\\s*[\\.\\u3001\\uFF0E]\\s*").matcher(text);
+        Matcher firstOption = Pattern.compile("(?s)(?:^|\\n)\\s*A\\s*[\\.\\u3001\\uFF0E]\\s*").matcher(text);
         if (!firstOption.find()) {
             return null;
         }
 
         String stemCode = text.substring(0, firstOption.start()).trim();
         String optionText = text.substring(firstOption.start()).trim();
-        List<String> options = new ArrayList<>();
-        Matcher matcher = INLINE_OPTION_PATTERN.matcher(optionText);
-        while (matcher.find()) {
-            String option = cleanChoiceOptionText(matcher.group(2));
-            if (StringUtils.isNotBlank(option)) {
-                options.add(option);
-            }
-        }
-        if (options.size() < 2) {
+        List<String> options = extractLetteredOptions(optionText);
+        if (countNonBlankOptions(options) < 2) {
             return null;
         }
         return new ProgramChoiceOptions(stemCode, options);
+    }
+
+    private List<String> extractLetteredOptions(String optionText) {
+        String[] slots = new String[4];
+        int maxIndex = -1;
+        Matcher matcher = INLINE_OPTION_PATTERN.matcher(optionText);
+        while (matcher.find()) {
+            int letterIndex = Character.toUpperCase(matcher.group(1).charAt(0)) - 'A';
+            if (letterIndex < 0 || letterIndex > 3) {
+                continue;
+            }
+            String option = cleanChoiceOptionText(matcher.group(2));
+            if (StringUtils.isNotBlank(option)) {
+                slots[letterIndex] = option;
+            }
+            maxIndex = Math.max(maxIndex, letterIndex);
+        }
+        List<String> options = new ArrayList<>();
+        for (int i = 0; i <= maxIndex; i++) {
+            options.add(StringUtils.defaultString(slots[i]).trim());
+        }
+        return options;
     }
 
     private List<Integer> findRightOptionIndexes(List<String> options, List<QuAnswerDTO> answers) {
@@ -1094,7 +1194,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     }
 
     private String formatObjectiveChoiceStem(String stem) {
-        ProgramContentFormatter.StemCodeParts parts = programContentFormatter.splitStemAndCode(stem);
+        String cleaned = QuestionBoundaryHelper.stripInlineFilledAnswer(stem);
+        ProgramContentFormatter.StemCodeParts parts = programContentFormatter.splitStemAndCode(cleaned);
         return programContentFormatter.mergeStemAndCode(parts.getStem(), parts.getCode());
     }
 
@@ -1235,15 +1336,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
         String stemCode = text.substring(0, firstOption.start()).trim();
         String optionText = text.substring(firstOption.start()).trim();
-        List<String> options = new ArrayList<>();
-        Matcher matcher = INLINE_OPTION_PATTERN.matcher(optionText);
-        while (matcher.find()) {
-            String option = cleanChoiceOptionText(matcher.group(2));
-            if (StringUtils.isNotBlank(option)) {
-                options.add(option);
-            }
-        }
-        if (options.size() < 4 || !containsCodeBlock(stemCode)) {
+        List<String> options = extractLetteredOptions(optionText);
+        if (options.size() < 4 || countNonBlankOptions(options) < 4 || !containsCodeBlock(stemCode)) {
             return null;
         }
         return new ProgramChoiceOptions(stemCode, options);

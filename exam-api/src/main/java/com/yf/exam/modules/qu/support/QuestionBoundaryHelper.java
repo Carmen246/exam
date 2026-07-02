@@ -104,6 +104,16 @@ public final class QuestionBoundaryHelper {
         return isNonQuestionFragment(block);
     }
 
+    /**
+     * 题干末尾预填答案如「是 ( A )。」还原为空括号，避免清洗时误识别为选项。
+     */
+    public static String stripInlineFilledAnswer(String text) {
+        if (StringUtils.isBlank(text)) {
+            return text;
+        }
+        return text.replaceAll("(?m)([\\u4e00-\\u9fa5])\\s*[（(]\\s*([A-D])\\s*[)）]\\s*([。．.])?", "$1（ ）$3");
+    }
+
     public static boolean isNonQuestionFragment(String block) {
         if (StringUtils.isBlank(block)) {
             return true;
