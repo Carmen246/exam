@@ -119,9 +119,9 @@
                 :disabled="taskRunning"
                 :on-change="handleFileChange"
                 action=""
-                accept=".xls,.xlsx,.docx,.doc,.pdf,.txt"
+                accept=".xls,.xlsx,.docx,.pdf,.txt"
               >
-                <el-button :loading="fileLoading" :disabled="taskRunning" icon="el-icon-upload2" type="primary" plain>选择试卷文档(Excel/docx/doc/pdf)</el-button>
+                <el-button :loading="fileLoading" :disabled="taskRunning" icon="el-icon-upload2" type="primary" plain>选择试卷文档(Excel/docx/pdf)</el-button>
               </el-upload>
               <el-upload
                 :auto-upload="false"
@@ -129,7 +129,7 @@
                 :disabled="taskRunning"
                 :on-change="handleAnswerFileChange"
                 action=""
-                accept=".docx,.doc,.pdf,.txt"
+                accept=".docx,.pdf,.txt"
                 class="answer-upload"
               >
                 <el-button :disabled="taskRunning" icon="el-icon-document" plain>选择答案文档（可选）</el-button>
@@ -545,9 +545,9 @@ export default {
 
       const fileName = rawFile.name || ''
       const lowerName = fileName.toLowerCase()
-      if (!lowerName.endsWith('.docx') && !lowerName.endsWith('.doc') && !lowerName.endsWith('.txt') && !lowerName.endsWith('.pdf') &&
+      if (!lowerName.endsWith('.docx') && !lowerName.endsWith('.txt') && !lowerName.endsWith('.pdf') &&
           !lowerName.endsWith('.xls') && !lowerName.endsWith('.xlsx')) {
-        this.$message.warning('只支持 Excel、docx、doc、pdf、txt 文件')
+        this.$message.warning('只支持 Excel、docx、pdf、txt 文件')
         return
       }
 
@@ -576,8 +576,8 @@ export default {
 
       const fileName = rawFile.name || ''
       const lowerName = fileName.toLowerCase()
-      if (!lowerName.endsWith('.docx') && !lowerName.endsWith('.doc') && !lowerName.endsWith('.txt') && !lowerName.endsWith('.pdf')) {
-        this.$message.warning('答案文档只支持 docx、doc、txt 和 pdf 文件')
+      if (!lowerName.endsWith('.docx') && !lowerName.endsWith('.txt') && !lowerName.endsWith('.pdf')) {
+        this.$message.warning('答案文档只支持 docx、txt 和 pdf 文件')
         return
       }
 

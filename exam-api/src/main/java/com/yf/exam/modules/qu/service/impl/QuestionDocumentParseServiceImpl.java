@@ -2,7 +2,6 @@ package com.yf.exam.modules.qu.service.impl;
 
 import com.yf.exam.core.exception.ServiceException;
 import com.yf.exam.modules.qu.service.QuestionDocumentParseService;
-import com.yf.exam.modules.qu.support.DocTextExtractor;
 import com.yf.exam.modules.qu.support.DocxBlankAwareTextExtractor;
 import com.yf.exam.modules.qu.support.AnswerDocumentTableParser;
 import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
@@ -27,9 +26,6 @@ public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseSe
 
     @Autowired
     private DocxBlankAwareTextExtractor docxBlankAwareTextExtractor;
-
-    @Autowired
-    private DocTextExtractor docTextExtractor;
 
     @Autowired
     private PdfTextExtractor pdfTextExtractor;
@@ -107,7 +103,7 @@ public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseSe
                 return docxBlankAwareTextExtractor.extract(inputStreamSupplier.get());
             }
             if ("doc".equalsIgnoreCase(ext)) {
-                return docTextExtractor.extract(inputStreamSupplier.get());
+                throw new ServiceException("暂不支持旧版 Word .doc 文件，请另存为 .docx 后再上传");
             }
             if ("txt".equalsIgnoreCase(ext)) {
                 return new String(bytesSupplier.get(), StandardCharsets.UTF_8);
@@ -118,7 +114,7 @@ public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseSe
             if ("xls".equalsIgnoreCase(ext) || "xlsx".equalsIgnoreCase(ext)) {
                 throw new ServiceException("Excel 文件请通过 AI 导入页面上传，系统将直接解析结构化数据");
             }
-            throw new ServiceException("暂只支持 doc、docx、txt、pdf 文件！");
+            throw new ServiceException("暂只支持 docx、txt、pdf 文件！");
         } catch (ServiceException e) {
             throw e;
         } catch (Exception e) {
