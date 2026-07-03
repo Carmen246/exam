@@ -26,7 +26,7 @@ public class QuestionTextLocalNormalizer {
         text = text.replace("．", ".");
         text = QuestionBoundaryHelper.separateGluedBoundaries(text);
         text = QuestionBoundaryHelper.stripInlineFilledAnswer(text);
-        text = text.replaceAll("\\s+([A-Ha-h])\\s*[\\.、]\\s*", "\n$1. ");
+        text = text.replaceAll("\\s+([A-Ha-h])\\s*[\\.、)）]\\s*", "\n$1. ");
         text = text.replaceAll("\\s+(答案|参考答案)\\s*[:：]\\s*", "\n答案：");
 
         String[] rawLines = text.split("\n");
@@ -77,7 +77,7 @@ public class QuestionTextLocalNormalizer {
         if (!QuestionBoundaryHelper.isBlankSubNumberLine(value)) {
             value = value.replaceAll("^(\\d+)\\s*[\\.、]\\s*", "$1. ");
         }
-        value = value.replaceAll("^([A-Ha-h])\\s*[\\.、]\\s*", "$1. ");
+        value = value.replaceAll("^([A-Ha-h])\\s*[\\.、)）]\\s*", "$1. ");
         value = value.replaceAll("^(答案|参考答案)\\s*[:：]?\\s*", "答案：");
         value = removeOptionTailIndex(value);
         return value.trim();

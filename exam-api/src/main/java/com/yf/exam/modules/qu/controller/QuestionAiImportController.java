@@ -87,6 +87,13 @@ public class QuestionAiImportController extends BaseController {
         return super.success(respDTO);
     }
 
+    @RequiresRoles("sa")
+    @ApiOperation(value = "测试AI后端连通性")
+    @GetMapping("/ai/ping")
+    public ApiRest<String> pingAi() {
+        return success(questionAiParseService.pingAi());
+    }
+
     @Autowired
     private QuestionAiParseService questionAiParseService;
     @RequiresRoles("sa")

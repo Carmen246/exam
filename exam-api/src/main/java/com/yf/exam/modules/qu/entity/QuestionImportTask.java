@@ -52,6 +52,16 @@ public class QuestionImportTask implements Serializable {
 
     private List<String> mergeWarnings = new ArrayList<>();
 
+    private Boolean ragflowUploadEnabled = false;
+
+    private Boolean ragflowUploaded = false;
+
+    private String ragflowDatasetId;
+
+    private List<String> ragflowDocumentIds = new ArrayList<>();
+
+    private String ragflowMessage;
+
     private String rawText;
 
     private String normalizedText;

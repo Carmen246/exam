@@ -56,7 +56,6 @@ export function training(data) {
   return post('/exam/api/paper/paper/training', data)
 }
 
-
 /**
  * 检查是否有进行中的考试
  * @returns {*}

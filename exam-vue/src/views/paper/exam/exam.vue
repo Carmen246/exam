@@ -107,9 +107,9 @@
           <div v-if="isSubjectiveQuType(quData.quType) && !isReadProgramChoiceDisplay(quData.quType, quData.answerList)">
             <el-input
               v-model="subjValue"
-              type="textarea"
               :rows="isFillProgramQuType(quData.quType) ? 6 : (quData.quType >= 6 ? 12 : 4)"
               :placeholder="subjectiveAnswerPlaceholder"
+              type="textarea"
             />
             <p v-if="isFillProgramQuType(quData.quType)" class="subj-tip">请按空位顺序填写答案，每行一空；提交后需人工批阅</p>
             <p v-else-if="isReadProgramQuType(quData.quType)" class="subj-tip">请写出程序运行结果；提交后需人工批阅</p>
@@ -186,13 +186,6 @@ export default {
       answeredIds: []
     }
   },
-  created() {
-    const id = this.$route.params.id
-    if (typeof id !== 'undefined') {
-      this.paperId = id
-      this.fetchData(id)
-    }
-  },
 
   computed: {
     stemCodeParts() {
@@ -200,6 +193,13 @@ export default {
     },
     subjectiveAnswerPlaceholder() {
       return getSubjectiveAnswerPlaceholder(this.quData.quType)
+    }
+  },
+  created() {
+    const id = this.$route.params.id
+    if (typeof id !== 'undefined') {
+      this.paperId = id
+      this.fetchData(id)
     }
   },
 
@@ -401,8 +401,8 @@ export default {
         // 填充该题目的答案
         if (this.quData.answerList) {
           this.quData.answerList.forEach((item) => {
-            if ((this.quData.quType === 1 || this.quData.quType === 3
-              || isReadProgramChoiceDisplay(this.quData.quType, this.quData.answerList)) && item.checked) {
+            if ((this.quData.quType === 1 || this.quData.quType === 3 ||
+              isReadProgramChoiceDisplay(this.quData.quType, this.quData.answerList)) && item.checked) {
               this.radioValue = item.id
             }
 

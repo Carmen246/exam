@@ -52,6 +52,11 @@
           :stroke-width="16"
         />
         <div class="task-progress-message">{{ taskMessage }}</div>
+        <div v-if="ragflowMessage" class="task-ragflow-message">
+          <el-tag :type="ragflowUploaded ? 'success' : 'warning'" size="mini">RAGFlow</el-tag>
+          <span>{{ ragflowMessage }}</span>
+          <span v-if="ragflowDocumentIds.length > 0" class="ragflow-docs">文档ID：{{ ragflowDocumentIds.join(', ') }}</span>
+        </div>
         <div v-if="taskTotalBatches > 0" class="task-progress-batch">
           <span v-if="taskDeepCleanBatchCount > 0">深度清洗 {{ taskDeepCleanBatchCount }} 批 · </span>
           批次进度：{{ taskCompletedBatches }} / {{ taskTotalBatches }}
@@ -60,11 +65,11 @@
         <div v-if="taskFailed || taskPartialCompleted" class="task-progress-actions">
           <span v-if="retryHint" class="task-retry-hint">{{ retryHint }}</span>
           <el-button
+            :loading="retryLoading"
+            :disabled="!canRetryTask"
             type="primary"
             size="small"
             icon="el-icon-refresh"
-            :loading="retryLoading"
-            :disabled="!canRetryTask"
             @click="handleRetryTask()"
           >
             重试全部失败批次
@@ -76,15 +81,17 @@
             <el-collapse-item :title="'失败批次 ' + failedBatches.length + ' 批'" name="failed">
               <el-table :data="failedBatches" size="mini" border stripe>
                 <el-table-column prop="batchNo" label="批次" width="70" align="center" />
-                <el-table-column prop="errorMessage" label="失败原因" min-width="180" show-overflow-tooltip />
+                <el-table-column label="失败原因" min-width="180" show-overflow-tooltip>
+                  <template v-slot="scope">{{ scope.row.errorMessage || '未返回失败原因，请查看后台日志' }}</template>
+                </el-table-column>
                 <el-table-column prop="previewText" label="文本片段" min-width="200" show-overflow-tooltip />
                 <el-table-column label="操作" width="140" align="center">
                   <template v-slot="scope">
                     <el-button type="text" size="mini" @click="showBatchPreview(scope.row)">查看片段</el-button>
                     <el-button
+                      :disabled="!canRetryTask || taskRunning"
                       type="text"
                       size="mini"
-                      :disabled="!canRetryTask || taskRunning"
                       @click="handleRetryTask(scope.row.batchNo)"
                     >
                       重试
@@ -107,41 +114,41 @@
 
             <div class="upload-box">
               <el-upload
-                action=""
                 :auto-upload="false"
                 :show-file-list="false"
-                accept=".docx,.txt,.pdf,.xls,.xlsx"
                 :disabled="taskRunning"
                 :on-change="handleFileChange"
+                action=""
+                accept=".xls,.xlsx,.docx,.doc,.pdf,.txt"
               >
-                <el-button icon="el-icon-upload2" type="primary" plain :loading="fileLoading" :disabled="taskRunning">选择试卷文档(docx/txt/pdf/xls/xlsx)</el-button>
+                <el-button :loading="fileLoading" :disabled="taskRunning" icon="el-icon-upload2" type="primary" plain>选择试卷文档(Excel/docx/doc/pdf)</el-button>
               </el-upload>
               <el-upload
-                action=""
                 :auto-upload="false"
                 :show-file-list="false"
-                accept=".docx,.txt,.pdf,.xls,.xlsx"
                 :disabled="taskRunning"
                 :on-change="handleAnswerFileChange"
+                action=""
+                accept=".docx,.doc,.pdf,.txt"
                 class="answer-upload"
               >
-                <el-button icon="el-icon-document" plain :disabled="taskRunning">选择答案文档（可选）</el-button>
+                <el-button :disabled="taskRunning" icon="el-icon-document" plain>选择答案文档（可选）</el-button>
               </el-upload>
               <el-alert
                 v-if="pendingFile && !taskRunning"
-                class="file-selected-alert"
                 :title="'已选择试卷：' + fileInfo.fileName"
                 :description="fileReadyTip"
-                type="info"
                 :closable="false"
+                class="file-selected-alert"
+                type="info"
                 show-icon
               />
               <el-alert
                 v-if="pendingAnswerFile && !taskRunning"
-                class="file-selected-alert"
                 :title="'已选择答案文档：' + answerFileInfo.fileName"
-                type="success"
                 :closable="false"
+                class="file-selected-alert"
+                type="success"
                 show-icon
               />
               <div v-if="!pendingFile && !pendingAnswerFile" class="upload-tip">也可以直接在下方粘贴试题文本。上传试卷/答案文档后，点击「开始AI导入」开始解析。</div>
@@ -149,29 +156,29 @@
 
             <el-input
               v-model="parseForm.text"
-              type="textarea"
               :rows="18"
               :readonly="taskRunning"
               :placeholder="textPlaceholder"
+              type="textarea"
             />
 
             <div class="source-footer">
               <span class="text-count">当前文本 {{ textLength }} 字</span>
               <div>
-                <el-button size="small" :disabled="taskRunning" @click="clearSource">清空</el-button>
+                <el-button :disabled="taskRunning" size="small" @click="clearSource">清空</el-button>
                 <el-button
+                  :disabled="!rawSourceText"
                   size="small"
                   icon="el-icon-view"
-                  :disabled="!rawSourceText"
                   @click="showRawText"
                 >
                   查看清洗前文本
                 </el-button>
                 <el-button
+                  :loading="taskRunning"
                   type="primary"
                   size="small"
                   icon="el-icon-magic-stick"
-                  :loading="taskRunning"
                   @click="handleStartImport"
                 >
                   开始AI导入
@@ -197,7 +204,7 @@
                 <div class="question-head">
                   <div class="question-head-main">
                     <div class="question-index-line">
-                      <el-tag size="mini" :type="quTypeTag(item.quType)">{{ quTypeLabel(item.quType) }}</el-tag>
+                      <el-tag :type="quTypeTag(item.quType)" size="mini">{{ quTypeLabel(item.quType) }}</el-tag>
                       <span class="question-index">{{ index + 1 }}.</span>
                     </div>
                     <div v-if="isSubjectiveQuType(item.quType) && !isStemCodeQuType(item.quType)" class="answer-section-title">题干</div>
@@ -226,15 +233,15 @@
                       class="question-content"
                     />
                   </div>
-                  <el-button type="text" class="danger-link" :disabled="taskRunning" @click="removeQuestion(index)">删除</el-button>
+                  <el-button :disabled="taskRunning" type="text" class="danger-link" @click="removeQuestion(index)">删除</el-button>
                 </div>
 
                 <div v-if="isObjectiveQuType(item.quType) || isReadProgramChoiceDisplay(item.quType, item.answerList)" class="answer-list">
                   <div
                     v-for="(answer, answerIndex) in item.answerList"
                     :key="answerIndex"
-                    class="answer-item"
                     :class="{ right: answer.isRight }"
+                    class="answer-item"
                   >
                     <span class="answer-prefix">{{ optionLabel(answerIndex) }}.</span>
                     <formatted-text :text="answer.content" class="answer-content" />
@@ -256,8 +263,8 @@
                     <div
                       v-for="(opt, optIndex) in answer.optionList"
                       :key="optIndex"
-                      class="answer-item"
                       :class="{ right: opt.isRight }"
+                      class="answer-item"
                     >
                       <span class="answer-prefix">{{ opt.letter }}.</span>
                       <formatted-text :text="opt.content" class="answer-content" />
@@ -321,7 +328,7 @@
 
             <div class="preview-footer">
               <el-button :disabled="taskRunning || (!pendingFile && !parseForm.text)" @click="handleStartImport">重新导入</el-button>
-              <el-button type="primary" :disabled="questions.length === 0 || taskRunning" :loading="importLoading" @click="handleConfirmImport">
+              <el-button :disabled="questions.length === 0 || taskRunning" :loading="importLoading" type="primary" @click="handleConfirmImport">
                 确认导入题库
               </el-button>
             </div>
@@ -331,8 +338,8 @@
     </el-card>
 
     <el-dialog
-      title="批次文本片段"
       :visible.sync="batchPreviewDialogVisible"
+      title="批次文本片段"
       width="760px"
       append-to-body
     >
@@ -342,8 +349,8 @@
       </div>
       <el-input
         v-model="batchPreviewItem.previewText"
-        type="textarea"
         :rows="12"
+        type="textarea"
         readonly
       />
       <div slot="footer">
@@ -352,15 +359,15 @@
     </el-dialog>
 
     <el-dialog
-      title="清洗前文本"
       :visible.sync="rawTextDialogVisible"
+      title="清洗前文本"
       width="760px"
       append-to-body
     >
       <el-input
         v-model="rawSourceText"
-        type="textarea"
         :rows="18"
+        type="textarea"
         readonly
       />
       <div slot="footer">
@@ -426,6 +433,9 @@ export default {
       taskFailedBatchCount: 0,
       taskDeepCleanBatchCount: 0,
       taskBatches: [],
+      ragflowUploaded: false,
+      ragflowMessage: '',
+      ragflowDocumentIds: [],
       failedBatchCollapse: ['failed'],
       batchPreviewDialogVisible: false,
       batchPreviewItem: {},
@@ -535,9 +545,9 @@ export default {
 
       const fileName = rawFile.name || ''
       const lowerName = fileName.toLowerCase()
-      if (!lowerName.endsWith('.docx') && !lowerName.endsWith('.txt') && !lowerName.endsWith('.pdf')
-          && !lowerName.endsWith('.xls') && !lowerName.endsWith('.xlsx')) {
-        this.$message.warning('只支持 docx、txt、pdf、xls、xlsx 文件')
+      if (!lowerName.endsWith('.docx') && !lowerName.endsWith('.doc') && !lowerName.endsWith('.txt') && !lowerName.endsWith('.pdf') &&
+          !lowerName.endsWith('.xls') && !lowerName.endsWith('.xlsx')) {
+        this.$message.warning('只支持 Excel、docx、doc、pdf、txt 文件')
         return
       }
 
@@ -566,8 +576,8 @@ export default {
 
       const fileName = rawFile.name || ''
       const lowerName = fileName.toLowerCase()
-      if (!lowerName.endsWith('.docx') && !lowerName.endsWith('.txt') && !lowerName.endsWith('.pdf')) {
-        this.$message.warning('答案文档只支持 docx、txt 和 pdf 文件')
+      if (!lowerName.endsWith('.docx') && !lowerName.endsWith('.doc') && !lowerName.endsWith('.txt') && !lowerName.endsWith('.pdf')) {
+        this.$message.warning('答案文档只支持 docx、doc、txt 和 pdf 文件')
         return
       }
 
@@ -748,6 +758,9 @@ export default {
       this.taskFailedBatchCount = data.failedBatchCount || 0
       this.taskDeepCleanBatchCount = data.deepCleanBatchCount || 0
       this.taskBatches = data.batches || []
+      this.ragflowUploaded = data.ragflowUploaded === true
+      this.ragflowMessage = data.ragflowMessage || ''
+      this.ragflowDocumentIds = data.ragflowDocumentIds || []
     },
 
     handleTaskPartialCompleted(data) {
@@ -796,6 +809,9 @@ export default {
       this.taskFailedBatchCount = 0
       this.taskDeepCleanBatchCount = 0
       this.taskBatches = []
+      this.ragflowUploaded = false
+      this.ragflowMessage = ''
+      this.ragflowDocumentIds = []
       this.taskHasNormalizedText = false
       this.taskErrorMessage = ''
       if (clearLastStatus) {
@@ -961,6 +977,22 @@ export default {
   margin-top: 10px;
   color: #606266;
   font-size: 13px;
+}
+
+.task-ragflow-message {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.ragflow-docs {
+  color: #909399;
+  word-break: break-all;
 }
 
 .task-progress-batch {

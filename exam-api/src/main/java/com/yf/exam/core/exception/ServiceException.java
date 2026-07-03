@@ -48,4 +48,14 @@ public class ServiceException extends RuntimeException{
         this.msg = msg;
     }
 
+    @Override
+    public String getMessage() {
+        return msg != null ? msg : super.getMessage();
+    }
+
+    @Override
+    public String getLocalizedMessage() {
+        return getMessage();
+    }
+
 }

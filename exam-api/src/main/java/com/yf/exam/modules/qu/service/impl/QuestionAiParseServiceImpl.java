@@ -14,7 +14,6 @@ import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatLanguageModel;
-import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.output.Response;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,9 +33,9 @@ import com.yf.exam.modules.repo.service.RepoService;
 import org.springframework.transaction.annotation.Transactional;
 import com.yf.exam.modules.qu.dto.QuestionNormalizeTextReqDTO;
 import com.yf.exam.modules.qu.dto.QuestionNormalizeTextRespDTO;
+import com.yf.exam.modules.qu.support.QuestionAiModelFactory;
 import com.yf.exam.modules.qu.support.ImportTaskProgressListener;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -63,8 +62,10 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             "(?m)^\\s*(#include\\s|#import\\s|#define\\s|using\\s+\\w|void\\s+main|int\\s+main|"
                     + "public\\s+class|class\\s+\\w+|def\\s+\\w|function\\s+\\w|package\\s+\\w|"
                     + "(?:int|char|void|float|double|long|short|unsigned)\\s+\\w+\\s*\\()");
+    private static final String CHOICE_MARKER = "[\\.\\u3001\\uFF0E\\)\\uFF09]";
     private static final Pattern INLINE_OPTION_PATTERN = Pattern.compile(
-            "(?s)([A-D])\\s*[\\.、．]\\s*(.*?)(?=(?:\\s+)?[A-D]\\s*[\\.、．]\\s*|$)");
+            "(?s)([A-D])\\s*" + CHOICE_MARKER + "\\s*(.*?)(?=(?:\\s+)?[A-D]\\s*"
+                    + CHOICE_MARKER + "\\s*|$)");
 
     private static final String SYSTEM_PROMPT =
             "你是在线考试系统的试题解析器。你只能返回合法 json，不要返回 Markdown，不要解释，不要使用代码块。"
@@ -88,7 +89,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     + "如果题目要求“阅读程序写结果”或给出完整程序要求写输出，解析为阅读程序写结果题(6)；"
                     + "content=题干+完整程序(无空位)，有选项时answerList存全部选项，无选项时answerList=运行结果，不要把程序放进 answerList。"
                     + "如果题目要求“编写程序”且只给需求无现成代码骨架，解析为编程题(7)；"
-                    + "content=仅题干，answerList[0]=完整参考程序，禁止把程序写进 content。"
+                    + "content=仅题干，禁止把程序写进 content；若答案文档提供完整参考程序则answerList[0]=完整参考程序，"
+                    + "若没有完整参考程序则answerList=[]，也必须输出该题，禁止跳过。"
                     + "如果题目要求“改错/改正/找出错误”，解析为程序改错题(8)；"
                     + "content=题干+有错程序，answerList=改正后程序。"
                     + "如果题目属于综合应用，解析为综合应用题(9)。"
@@ -101,11 +103,12 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     + "阅读程序写结果题(6)：content=题干+完整程序(无空位，不含A/B/C/D选项)；"
                     + "若原题有A/B/C/D选项，answerList存全部选项(与单选题相同)，仅一个isRight=true，"
                     + "content中不要重复放选项。"
-                    + "编程题(7)：content=仅题干，answerList[0]=完整参考程序，禁止把程序写进 content。"
+                    + "编程题(7)：content=仅题干，禁止把程序写进 content；若有完整参考程序则answerList[0]=完整参考程序，"
+                    + "若无完整参考程序则answerList=[]，也必须输出该题，禁止跳过。"
                     + "程序改错题(8)：content=题干+有错程序，answerList=改正后程序；关键词“改错/改正/错误”。"
-                    + "小节标题如\"3 填空题\"\"5 编程题\"也决定题型：填空题小节一律 quType=5(程序填空题)，"
-                    + "即使代码看似有错也禁止改为8；编程题/书中例题小节一律 quType=7，"
-                    + "每个「例1_1」「例1_2」必须单独成题，禁止合并或跳过。"
+                    + "小节标题如\"3 填空题\"\"5 编程题\"只作为题型上下文，不要把小节标题、书名、章节名、学习指导标题输出为题目；"
+                    + "填空题小节一律 quType=5(程序填空题)，即使代码看似有错也禁止改为8；"
+                    + "编程题/书中例题小节中的「例1_1」「例1_2」等具体例题必须单独成题，禁止合并或跳过。"
                     + "填空题小节中带完整程序的题必须在代码空位处用____标记，禁止跳过。"
                     + "程序代码必须保留换行与缩进，JSON 中用 \\n 表示换行。"
                     + "返回格式必须是："
@@ -143,6 +146,9 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
     @Autowired
     private ProgramContentFormatter programContentFormatter;
+
+    @Autowired
+    private QuestionAiModelFactory questionAiModelFactory;
 
     private volatile ChatLanguageModel chatModel;
 
@@ -515,24 +521,18 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         if (chatModel == null) {
             synchronized (this) {
                 if (chatModel == null) {
-                    if (StringUtils.isBlank(properties.getApiKey())) {
-                        throw new ServiceException("未配置 DEEPSEEK_API_KEY");
-                    }
-
-                    chatModel = OpenAiChatModel.builder()
-                            .baseUrl(properties.getBaseUrl())
-                            .apiKey(properties.getApiKey())
-                            .modelName(properties.getModelName())
-                            .temperature(0.1)
-                            .maxTokens(8000)
-                            .responseFormat("json_object")
-                            .timeout(Duration.ofSeconds(properties.getTimeoutSeconds()))
-                            .maxRetries(1)
-                            .build();
+                    chatModel = questionAiModelFactory.create(properties);
                 }
             }
         }
         return chatModel;
+    }
+
+    @Override
+    public String pingAi() {
+        List<ChatMessage> messages = new ArrayList<>();
+        messages.add(UserMessage.from("请只回复 OK"));
+        return readAiText(invokeAi(messages));
     }
 
     private void checkRequest(QuestionParseReqDTO reqDTO) {
@@ -562,6 +562,11 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             "(?m)^\\s*(?:得分\\s*)?(?:[一二三四五六七八九十]+、)?\\s*"
                     + "(?:判断题|单选题|多选题|填空题|程序填空题|程序阅读题|阅读程序写结果题|"
                     + "程序设计题|编程题|程序改错题|综合应用题)[^\\n]*本大题共[^\\n]*");
+
+    private static final Pattern DECIMAL_SECTION_TITLE = Pattern.compile(
+            "^\\s*\\d+(?:\\.\\d+)+\\s+[^\\n]{0,160}(?:书中例题|学习指导|问题求解|程序设计|CDIO|教材|第\\s*\\d+\\s*版)[^\\n]*$");
+    private static final Pattern CHAPTER_TITLE = Pattern.compile("^\\s*第[一二三四五六七八九十0-9]+章\\s+[^\\n]{1,120}$");
+    private static final Pattern EXAMPLE_ID = Pattern.compile("例\\s*\\d+\\s*[_-]\\s*\\d+");
 
     private List<String> splitQuestionText(String text, int maxLength, int maxQuestionCount) {
         List<String> blocks = splitQuestionBlocks(text);
@@ -752,6 +757,45 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         qu.setContent(content);
     }
 
+    private boolean isNonQuestionTitle(QuDetailDTO qu) {
+        if (qu == null || StringUtils.isBlank(qu.getContent())) {
+            return false;
+        }
+        String content = qu.getContent().trim();
+        if (hasConcreteQuestionCue(content)) {
+            return false;
+        }
+        if (QuestionBoundaryHelper.isSectionHeaderOnlyFragment(content)) {
+            return true;
+        }
+        if (DECIMAL_SECTION_TITLE.matcher(content).matches() || CHAPTER_TITLE.matcher(content).matches()) {
+            return true;
+        }
+        String compact = content.replaceAll("\\s+", "");
+        return compact.matches("^\\d+(?:\\.\\d+)+.*(书中例题|学习指导|问题求解|程序设计|CDIO|教材|第\\d+版).*$")
+                || compact.matches("^\\d+(?:\\.\\d+)?(编程题|程序设计题|填空题|程序填空题|阅读程序题|程序改错题)$");
+    }
+
+    private boolean hasConcreteQuestionCue(String content) {
+        if (StringUtils.isBlank(content)) {
+            return false;
+        }
+        String compact = content.replaceAll("\\s+", "");
+        if (EXAMPLE_ID.matcher(content).find()) {
+            return true;
+        }
+        String[] cues = {
+                "请编写", "编写程序", "设计程序", "实现", "要求", "输出", "输入", "计算", "求出", "写出",
+                "阅读程序", "阅读下列", "下列程序", "下面程序", "改错", "判断", "选择", "填空"
+        };
+        for (String cue : cues) {
+            if (compact.contains(cue)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private List<String> filterIgnorableChunks(List<String> chunks) {
         if (CollectionUtils.isEmpty(chunks)) {
             return chunks;
@@ -818,9 +862,10 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         return "请把下面的试题文本解析为在线考试系统可导入的 json。\n"
                 + "要求：\n"
                 + "1. 只能按原题型解析，不要把填空题/编程题改造成选择题。\n"
-                + "1a. 小节标题如「3 填空题」「5 编程题」决定题型：填空题小节一律 quType=5(程序填空题)，"
-                + "即使代码看似有错也禁止 quType=8；编程题/书中例题小节一律 quType=7；"
-                + "「例1_1」「例1_2」等书中例题每例必须单独输出一题。\n"
+                + "1a. 小节标题如「3 填空题」「5 编程题」只决定题型上下文，不是题目本身；"
+                + "禁止把书名、章节名、学习指导标题、目录标题输出为题目。"
+                + "填空题小节一律 quType=5(程序填空题)，即使代码看似有错也禁止 quType=8；"
+                + "编程题/书中例题小节中的「例1_1」「例1_2」等具体例题每例必须单独输出一题。\n"
                 + "1b. 「3 填空题」小节中带完整程序的题：在需填写的语句/条件/表达式处用 ____ 标记，"
                 + "answerList 按顺序存各空答案，禁止整题当作改错题。\n"
                 + "2. 单选题 quType=1，只能有一个正确答案。\n"
@@ -853,7 +898,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 + "8. 编程题 quType=7（重点）：\n"
                 + "   - 识别特征：只给题目需求/功能描述，要求学生编写完整程序，无现成代码骨架。\n"
                 + "   - 关键词：编写程序、写程序、编程实现。\n"
-                + "   - content=仅题干文字，禁止把程序写进 content；answerList[0]=完整参考程序。\n"
+                + "   - content=仅题干文字，禁止把程序写进 content。\n"
+                + "   - 如果答案文档提供完整参考程序，answerList[0]=完整参考程序；如果没有完整参考程序，answerList=[]，也必须输出该题，禁止跳过。\n"
                 + "9. 程序改错题 quType=8（重点）：\n"
                 + "   - 识别特征：给出有错程序，要求找出错误并改正。\n"
                 + "   - 关键词：改错、改正、错误、请修改。\n"
@@ -908,8 +954,11 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             throw new ServiceException("AI未解析出任何试题");
         }
 
-        int index = 1;
+        List<QuDetailDTO> normalizedQuestions = new ArrayList<>();
         for (QuDetailDTO qu : respDTO.getQuestions()) {
+            if (qu == null) {
+                continue;
+            }
             if (StringUtils.isNotBlank(qu.getContent())) {
                 qu.setContent(QuestionBoundaryHelper.stripInlineFilledAnswer(qu.getContent()));
             }
@@ -931,17 +980,27 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
             applySectionQuType(qu, reqDTO.getText());
             sanitizeQuestionContent(qu);
+            if (isNonQuestionTitle(qu)) {
+                continue;
+            }
 
-            normalizeObjectiveChoiceQuestion(qu, reqDTO.getText(), index);
-            normalizeProgramChoiceQuestion(qu, reqDTO.getText(), index);
-            normalizeFillProgramQuestion(qu, reqDTO.getText(), index);
+            int normalizedIndex = normalizedQuestions.size() + 1;
+            normalizeObjectiveChoiceQuestion(qu, reqDTO.getText(), normalizedIndex);
+            normalizeJudgeQuestion(qu);
+            normalizeProgramChoiceQuestion(qu, reqDTO.getText(), normalizedIndex);
+            normalizeFillProgramQuestion(qu, reqDTO.getText(), normalizedIndex);
             normalizeReadProgramQuestion(qu);
             normalizeFixProgramQuestion(qu);
             splitStemAndReference(qu);
             sanitizeVisibleFillMarkers(qu);
-            checkQuestion(qu, index);
-            index++;
+            checkQuestion(qu, normalizedIndex, false);
+            normalizedQuestions.add(qu);
         }
+        if (CollectionUtils.isEmpty(normalizedQuestions)) {
+            throw new ServiceException("AI未解析出任何有效试题");
+        }
+        respDTO.setQuestions(normalizedQuestions);
+        respDTO.setCount(normalizedQuestions.size());
     }
 
     /**
@@ -1221,7 +1280,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
     private ProgramChoiceOptions extractObjectiveChoiceOptions(String content) {
         String text = StringUtils.defaultString(content).trim();
-        Matcher firstOption = Pattern.compile("(?s)(?:^|\\n)\\s*A\\s*[\\.\\u3001\\uFF0E]\\s*").matcher(text);
+        Matcher firstOption = Pattern.compile("(?s)(?:^|\\n|\\s)A\\s*" + CHOICE_MARKER + "\\s*").matcher(text);
         if (!firstOption.find()) {
             return null;
         }
@@ -1493,7 +1552,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
     private ProgramChoiceOptions extractProgramChoiceOptions(String content) {
         String text = StringUtils.defaultString(content).trim();
-        Matcher firstOption = Pattern.compile("(?s)\\sA\\s*[\\.、．]\\s*").matcher(text);
+        Matcher firstOption = Pattern.compile("(?s)(?:^|\\n|\\s)A\\s*" + CHOICE_MARKER + "\\s*").matcher(text);
         if (!firstOption.find()) {
             return null;
         }
@@ -1872,6 +1931,10 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     }
 
     private void checkQuestion(QuDetailDTO qu, int index) {
+        checkQuestion(qu, index, true);
+    }
+
+    private void checkQuestion(QuDetailDTO qu, int index, boolean strictProgramAnswer) {
         if (StringUtils.isBlank(qu.getContent())) {
             throw new ServiceException("第" + index + "题题干为空");
         }
@@ -1887,7 +1950,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         if (QuType.isObjective(qu.getQuType())) {
             checkObjectiveQuestion(qu, index);
         } else {
-            checkSubjectiveQuestion(qu, index);
+            checkSubjectiveQuestion(qu, index, strictProgramAnswer);
         }
     }
 
@@ -1929,7 +1992,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         }
     }
 
-    private void checkSubjectiveQuestion(QuDetailDTO qu, int index) {
+    private void checkSubjectiveQuestion(QuDetailDTO qu, int index, boolean strictProgramAnswer) {
         if (QuType.FILL_PROGRAM.equals(qu.getQuType())) {
             if (CollectionUtils.isEmpty(qu.getAnswerList())) {
                 throw new ServiceException("第" + index + "题程序填空题缺少各空参考答案");
@@ -1996,7 +2059,10 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
         if (QuType.PROGRAM.equals(qu.getQuType())) {
             if (CollectionUtils.isEmpty(qu.getAnswerList())) {
-                throw new ServiceException("第" + index + "题编程题缺少参考程序代码");
+                if (strictProgramAnswer) {
+                    throw new ServiceException("第" + index + "题编程题缺少参考程序代码");
+                }
+                return;
             }
             boolean hasCode = false;
             for (QuAnswerDTO answer : qu.getAnswerList()) {
@@ -2005,7 +2071,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     break;
                 }
             }
-            if (!hasCode) {
+            if (!hasCode && strictProgramAnswer) {
                 throw new ServiceException("第" + index + "题编程题的参考答案必须是程序代码");
             }
             qu.setContent(stripEmbeddedCode(qu.getContent()));
@@ -2102,6 +2168,82 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         }
         return StringUtils.join(rightAnswers, "，");
     }
+    private void normalizeJudgeQuestion(QuDetailDTO qu) {
+        if (!QuType.JUDGE.equals(qu.getQuType())) {
+            return;
+        }
+
+        Boolean rightValue = null;
+        if (!CollectionUtils.isEmpty(qu.getAnswerList())) {
+            for (int i = 0; i < qu.getAnswerList().size(); i++) {
+                QuAnswerDTO answer = qu.getAnswerList().get(i);
+                if (answer == null || !Boolean.TRUE.equals(answer.getIsRight())) {
+                    continue;
+                }
+                rightValue = inferJudgeAnswerValue(answer.getContent(), i);
+                if (rightValue != null) {
+                    break;
+                }
+            }
+        }
+        if (rightValue == null) {
+            return;
+        }
+
+        List<QuAnswerDTO> answers = new ArrayList<>();
+        answers.add(buildJudgeAnswer(qu.getAnswerList(), true, rightValue));
+        answers.add(buildJudgeAnswer(qu.getAnswerList(), false, rightValue));
+        qu.setAnswerList(answers);
+    }
+
+    private Boolean inferJudgeAnswerValue(String text, int index) {
+        String value = StringUtils.defaultString(text).trim();
+        String compact = value.replaceAll("\\s+", "");
+        if (value.matches("(?i)^(A|T|TRUE)$") || value.contains("正确")
+                || "对".equals(compact) || "是".equals(compact) || "√".equals(compact)) {
+            return Boolean.TRUE;
+        }
+        if (value.matches("(?i)^(B|F|FALSE)$") || value.contains("错误")
+                || "错".equals(compact) || "不对".equals(compact) || "否".equals(compact)
+                || "×".equals(compact) || "X".equalsIgnoreCase(compact)) {
+            return Boolean.FALSE;
+        }
+        if (index == 0) {
+            return Boolean.TRUE;
+        }
+        if (index == 1) {
+            return Boolean.FALSE;
+        }
+        return null;
+    }
+
+    private QuAnswerDTO buildJudgeAnswer(List<QuAnswerDTO> sourceAnswers, boolean optionValue, boolean rightValue) {
+        QuAnswerDTO template = findJudgeAnswerTemplate(sourceAnswers, optionValue);
+        QuAnswerDTO answer = new QuAnswerDTO();
+        answer.setContent(optionValue ? "正确" : "错误");
+        answer.setIsRight(optionValue == rightValue);
+        answer.setImage(template == null ? "" : StringUtils.defaultString(template.getImage()));
+        answer.setAnalysis(template == null ? "" : StringUtils.defaultString(template.getAnalysis()));
+        return answer;
+    }
+
+    private QuAnswerDTO findJudgeAnswerTemplate(List<QuAnswerDTO> answers, boolean optionValue) {
+        if (CollectionUtils.isEmpty(answers)) {
+            return null;
+        }
+        for (int i = 0; i < answers.size(); i++) {
+            QuAnswerDTO answer = answers.get(i);
+            if (answer == null) {
+                continue;
+            }
+            Boolean value = inferJudgeAnswerValue(answer.getContent(), i);
+            if (value != null && value == optionValue) {
+                return answer;
+            }
+        }
+        return null;
+    }
+
     @Autowired
     private QuService quService;
 
@@ -2137,6 +2279,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     private void prepareQuestionForInsert(QuDetailDTO qu, int index) {
 
         normalizeObjectiveChoiceQuestion(qu, null, index);
+        normalizeJudgeQuestion(qu);
         normalizeProgramChoiceQuestion(qu, null, index);
         normalizeFillProgramQuestion(qu, null, index);
         normalizeReadProgramQuestion(qu);

@@ -34,6 +34,9 @@ import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
 import javax.servlet.http.HttpServletResponse;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 
 /**
 * <p>
@@ -159,6 +162,12 @@ public class PaperController extends BaseController {
         //根据ID删除
         ExamResultRespDTO respDTO = baseService.paperResult(reqDTO.getId());
         return super.success(respDTO);
+    }
+
+    @ApiOperation(value = "考试截图列表")
+    @RequestMapping(value = "/captures", method = { RequestMethod.POST})
+    public ApiRest<List<Map<String, String>>> captures(@RequestBody BaseIdReqDTO reqDTO) {
+        return super.success(Collections.emptyList());
     }
 
 

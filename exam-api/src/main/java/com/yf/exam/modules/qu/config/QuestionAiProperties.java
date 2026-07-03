@@ -9,9 +9,39 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "exam.ai")
 public class QuestionAiProperties {
 
+    /** openai=直连 OpenAI 兼容 API；ragflow=对接 RAGFlow 聊天助手（方式 A） */
+    private String provider = "openai";
+
     private String baseUrl;
 
     private String apiKey;
+
+    /** RAGFlow 聊天助手 ID（provider=ragflow 时必填） */
+    private String chatId;
+
+    /** RAGFlow knowledge API base URL, independent from the parser model URL. */
+    private String ragflowBaseUrl;
+
+    /** RAGFlow API key, independent from the parser model API key. */
+    private String ragflowApiKey;
+
+    /** RAGFlow 知识库 ID；为空时可通过知识库列表接口自动获取 */
+    private String ragflowDatasetId;
+
+    /** RAGFlow 知识库名称；datasetId 为空时按名称从列表接口匹配 */
+    private String ragflowDatasetName;
+
+    /** RAGFlow 知识库列表接口每页数量 */
+    private Integer ragflowDatasetPageSize = 10;
+
+    /** 上传试卷文档后，是否同步写入 RAGFlow 知识库并触发解析 */
+    private Boolean ragflowAutoUpload = false;
+
+    /** RAGFlow 知识库上传失败时，是否中断本次 AI 导入 */
+    private Boolean ragflowUploadFailFast = false;
+
+    /** RAGFlow 上传/触发解析接口超时时间 */
+    private Integer ragflowUploadTimeoutSeconds = 120;
 
     private String modelName = "deepseek-v4-flash";
 
@@ -36,5 +66,5 @@ public class QuestionAiProperties {
     private Integer parseFallbackMinExpected = 3;
 
     /** 批次流水线统一 AI 并发数（清洗+解析共享） */
-    private Integer aiConcurrency = 3;
+    private Integer aiConcurrency = 2;
 }

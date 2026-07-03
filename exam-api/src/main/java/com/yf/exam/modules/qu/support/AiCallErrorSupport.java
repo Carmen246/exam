@@ -1,5 +1,6 @@
 package com.yf.exam.modules.qu.support;
 
+import com.yf.exam.core.exception.ServiceException;
 import org.apache.commons.lang3.StringUtils;
 
 /**
@@ -57,13 +58,20 @@ public final class AiCallErrorSupport {
         StringBuilder sb = new StringBuilder();
         Throwable current = error;
         while (current != null) {
-            if (StringUtils.isNotBlank(current.getMessage())) {
+            String message = current.getMessage();
+            if (StringUtils.isBlank(message) && current instanceof ServiceException) {
+                message = ((ServiceException) current).getMsg();
+            }
+            if (StringUtils.isNotBlank(message)) {
                 if (sb.length() > 0) {
                     sb.append(' ');
                 }
-                sb.append(current.getMessage().trim());
+                sb.append(message.trim());
             }
             current = current.getCause();
+        }
+        if (sb.length() == 0 && error != null) {
+            sb.append(error.getClass().getSimpleName());
         }
         return sb.toString();
     }

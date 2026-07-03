@@ -55,6 +55,21 @@ public class QuestionImportTaskStatusRespDTO implements Serializable {
     @ApiModelProperty("答案文档合并提示")
     private List<String> mergeWarnings = new ArrayList<>();
 
+    @ApiModelProperty("是否开启 RAGFlow 知识库上传")
+    private Boolean ragflowUploadEnabled;
+
+    @ApiModelProperty("是否已上传到 RAGFlow 知识库")
+    private Boolean ragflowUploaded;
+
+    @ApiModelProperty("RAGFlow 知识库 ID")
+    private String ragflowDatasetId;
+
+    @ApiModelProperty("RAGFlow 文档 ID")
+    private List<String> ragflowDocumentIds = new ArrayList<>();
+
+    @ApiModelProperty("RAGFlow 上传/解析提示")
+    private String ragflowMessage;
+
     @ApiModelProperty("清洗前文本")
     private String rawText;
 

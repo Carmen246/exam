@@ -27,4 +27,7 @@ public interface QuestionAiParseService {
     QuestionParseRespDTO parseSingleBatch(QuestionParseReqDTO reqDTO, String batchNo);
 
     String normalizeSingleBatch(String text, String batchNo);
+
+    /** 测试当前 AI 后端（含 RAGFlow）是否连通 */
+    String pingAi();
 }

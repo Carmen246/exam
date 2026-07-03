@@ -40,10 +40,10 @@
         <el-form-item v-if="!isStemCodeSplitType" label="题目内容" prop="content">
           <el-input
             v-model="postForm.content"
-            type="textarea"
             :rows="isProgramType ? 5 : (isLongTextType ? 8 : 4)"
             :placeholder="contentPlaceholder"
             :class="{ 'code-textarea': isFixProgramType && !isStemCodeSplitType }"
+            type="textarea"
           />
         </el-form-item>
 
@@ -166,18 +166,18 @@
         <el-form-item label="题干说明">
           <el-input
             v-model="stemText"
-            type="textarea"
             :rows="4"
             :placeholder="stemPlaceholder"
+            type="textarea"
           />
         </el-form-item>
 
         <el-form-item :label="codeSectionLabel">
           <el-input
             v-model="codeText"
-            type="textarea"
             :rows="16"
             :placeholder="codePlaceholder"
+            type="textarea"
             class="code-textarea"
           />
         </el-form-item>
@@ -216,10 +216,10 @@
         <el-form-item v-else-if="!isReadProgramChoiceType" :label="referenceLabel">
           <el-input
             v-model="referenceText"
-            type="textarea"
             :rows="isFixProgramType ? 16 : 6"
             :placeholder="referencePlaceholder"
             :class="{ 'code-textarea': isFixProgramType }"
+            type="textarea"
           />
         </el-form-item>
 
@@ -231,10 +231,10 @@
         <el-form-item :label="referenceLabel">
           <el-input
             v-model="referenceText"
-            type="textarea"
             :rows="isProgramType ? 16 : 10"
             :placeholder="referencePlaceholder"
             :class="{ 'code-textarea': isProgramType || postForm.quType === 8 }"
+            type="textarea"
           />
         </el-form-item>
 

@@ -65,9 +65,8 @@ export default {
     ])
   },
   mounted() {
-
     // 演示账号密码
-    if(this.isDemo){
+    if (this.isDemo) {
       this.postForm.username = 'admin'
       this.postForm.password = 'admin'
     }

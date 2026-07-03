@@ -68,7 +68,7 @@ public class QuestionImportBatchState implements Serializable {
 
     public void markFailed(String errorMessage) {
         this.status = STATUS_FAILED;
-        this.errorMessage = errorMessage;
+        this.errorMessage = StringUtils.defaultIfBlank(errorMessage, "批次处理失败，请查看后台日志");
         this.questions = new ArrayList<>();
         this.questionCount = 0;
     }

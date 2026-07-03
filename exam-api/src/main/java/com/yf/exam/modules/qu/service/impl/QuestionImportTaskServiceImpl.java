@@ -9,6 +9,7 @@ import com.yf.exam.modules.qu.dto.ImportBatchStatusDTO;
 import com.yf.exam.modules.qu.dto.QuestionImportTaskCreateRespDTO;
 import com.yf.exam.modules.qu.dto.QuestionImportTaskStatusRespDTO;
 import com.yf.exam.modules.qu.dto.QuestionParseReqDTO;
+import com.yf.exam.modules.qu.dto.RagflowDocumentUploadResultDTO;
 import com.yf.exam.modules.qu.dto.ext.QuDetailDTO;
 import com.yf.exam.modules.qu.entity.QuestionImportBatchState;
 import com.yf.exam.modules.qu.entity.QuestionImportTask;
@@ -17,6 +18,7 @@ import com.yf.exam.modules.qu.enums.QuestionImportTaskStatus;
 import com.yf.exam.modules.qu.service.QuestionAiParseService;
 import com.yf.exam.modules.qu.service.QuestionDocumentParseService;
 import com.yf.exam.modules.qu.service.QuestionImportTaskService;
+import com.yf.exam.modules.qu.service.RagflowKnowledgeService;
 import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
 import com.yf.exam.modules.qu.support.QuestionAnswerDocumentMerger;
 import com.yf.exam.modules.qu.support.AiCallErrorSupport;
@@ -64,6 +66,9 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
 
     @Autowired
     private QuestionImportBatchProcessor batchProcessor;
+
+    @Autowired
+    private RagflowKnowledgeService ragflowKnowledgeService;
 
     @Autowired
     private QuestionAiProperties questionAiProperties;
@@ -142,6 +147,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
         }
 
         try {
+            uploadQuestionFileToRagflow(task);
             if (isExcelTask(task)) {
                 processExcelTask(task);
             } else {
@@ -156,6 +162,62 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
             task.setTempFile(null);
             task.setAnswerTempFile(null);
         }
+    }
+
+    private void uploadQuestionFileToRagflow(QuestionImportTask task) {
+        if (task.getTempFile() == null) {
+            return;
+        }
+        if (!ragflowKnowledgeService.isAutoUploadRequested()) {
+            return;
+        }
+
+        task.setRagflowUploadEnabled(true);
+
+        if (!ragflowKnowledgeService.isReadyForUpload()) {
+            String message = ragflowKnowledgeService.getUploadSkipReason();
+            task.setRagflowMessage(message);
+            addTaskWarning(task, message);
+            if (Boolean.TRUE.equals(questionAiProperties.getRagflowUploadFailFast())) {
+                throw new ServiceException(message);
+            }
+            return;
+        }
+        task.setRagflowDatasetId(ragflowKnowledgeService.getDatasetId());
+
+        updateTask(task, QuestionImportTaskStatus.EXTRACTING, PROGRESS_EXTRACTING,
+                "正在上传试卷文档到 RAGFlow 知识库");
+        try {
+            RagflowDocumentUploadResultDTO result = ragflowKnowledgeService.uploadAndParse(task.getTempFile(),
+                    task.getFileName());
+            task.setRagflowUploaded(true);
+            task.setRagflowDatasetId(result.getDatasetId());
+            task.setRagflowDocumentIds(result.getDocumentIds());
+            task.setRagflowMessage(result.getMessage());
+            addTaskWarning(task, result.getMessage());
+            task.setMessage("RAGFlow 知识库上传完成，正在继续解析文档");
+        } catch (Exception e) {
+            String message = e instanceof ServiceException
+                    ? e.getMessage()
+                    : "RAGFlow 知识库上传失败：" + e.getMessage();
+            task.setRagflowUploaded(false);
+            task.setRagflowMessage(message);
+            addTaskWarning(task, message);
+            log.warn("RAGFlow 知识库上传失败，继续执行本地 AI 导入：{}", message, e);
+            if (Boolean.TRUE.equals(questionAiProperties.getRagflowUploadFailFast())) {
+                throw e instanceof ServiceException ? (ServiceException) e : new ServiceException(message);
+            }
+        }
+    }
+
+    private void addTaskWarning(QuestionImportTask task, String message) {
+        if (StringUtils.isBlank(message)) {
+            return;
+        }
+        if (task.getMergeWarnings() == null) {
+            task.setMergeWarnings(new ArrayList<>());
+        }
+        task.getMergeWarnings().add(message);
     }
 
     @Override
@@ -266,8 +328,8 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
             AnswerDocumentMergeResultDTO mergeResult = answerDocumentMerger.merge(mergedText, answerText);
             mergedText = mergeResult.getMergedText();
             if (!CollectionUtils.isEmpty(mergeResult.getWarnings())) {
-                task.setMergeWarnings(new ArrayList<>(mergeResult.getWarnings()));
                 for (String warning : mergeResult.getWarnings()) {
+                    addTaskWarning(task, warning);
                     log.warn("答案文档合并提示：{}", warning);
                 }
             }
@@ -349,10 +411,9 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
                             deepCleanCount.incrementAndGet();
                         }
                     } catch (Exception e) {
-                        String message = e instanceof ServiceException
-                                ? e.getMessage()
-                                : AiCallErrorSupport.toUserMessage(e);
+                        String message = buildBatchErrorMessage(batchNo, e);
                         state.markFailed(message);
+                        log.warn("AI导入第{}批处理失败：{}", batchNo, message, e);
                     }
                     refreshBatchProgress(task, batchStates, deepCleanCount.get());
                 }
@@ -361,6 +422,17 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
 
         CompletableFuture.allOf(workers.toArray(new CompletableFuture[0])).join();
         mergeAndFinalize(task);
+    }
+
+    private String buildBatchErrorMessage(String batchNo, Exception e) {
+        String reason = e instanceof ServiceException
+                ? StringUtils.defaultIfBlank(e.getMessage(), AiCallErrorSupport.toUserMessage(e))
+                : AiCallErrorSupport.toUserMessage(e);
+        reason = StringUtils.defaultIfBlank(reason, "批次处理失败，请查看后台日志");
+        if (StringUtils.startsWith(reason, "第" + batchNo + "批")) {
+            return reason;
+        }
+        return "第" + batchNo + "批处理失败：" + reason;
     }
 
     private void refreshBatchProgress(QuestionImportTask task, List<QuestionImportBatchState> batchStates,
@@ -649,6 +721,11 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
         resp.setFileName(task.getFileName());
         resp.setAnswerFileName(task.getAnswerFileName());
         resp.setMergeWarnings(task.getMergeWarnings());
+        resp.setRagflowUploadEnabled(task.getRagflowUploadEnabled());
+        resp.setRagflowUploaded(task.getRagflowUploaded());
+        resp.setRagflowDatasetId(task.getRagflowDatasetId());
+        resp.setRagflowDocumentIds(task.getRagflowDocumentIds());
+        resp.setRagflowMessage(task.getRagflowMessage());
         resp.setErrorMessage(task.getErrorMessage());
         resp.setBatches(toBatchStatusList(task));
 

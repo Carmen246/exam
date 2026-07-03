@@ -58,8 +58,8 @@
             <div
               v-for="opt in an.optionList"
               :key="opt.letter"
-              class="blank-answer-line"
               :class="{ 'blank-choice-right': opt.isRight }"
+              class="blank-answer-line"
             >
               {{ opt.letter }}. <formatted-text :text="opt.content" />
               <el-tag v-if="opt.isRight" size="mini" type="success">正确</el-tag>
@@ -163,16 +163,16 @@ export default {
       if (isReadProgramChoiceDisplay(this.quData.quType, this.quData.answerList)) {
         return false
       }
-      return isReadProgramQuType(this.quData.quType)
-        || isProgramQuType(this.quData.quType)
-        || isFixProgramQuType(this.quData.quType)
-        || this.quData.quType === 9
+      return isReadProgramQuType(this.quData.quType) ||
+        isProgramQuType(this.quData.quType) ||
+        isFixProgramQuType(this.quData.quType) ||
+        this.quData.quType === 9
     },
     showOptionAnalysis() {
-      return this.quData.quType === 1
-        || this.quData.quType === 2
-        || isReadProgramChoiceDisplay(this.quData.quType, this.quData.answerList)
-        || isFillProgramChoiceDisplay(this.quData.quType, this.quData.answerList)
+      return this.quData.quType === 1 ||
+        this.quData.quType === 2 ||
+        isReadProgramChoiceDisplay(this.quData.quType, this.quData.answerList) ||
+        isFillProgramChoiceDisplay(this.quData.quType, this.quData.answerList)
     }
   },
   created() {
@@ -210,8 +210,8 @@ export default {
             })
           }
           if (an.isRight) {
-            if (this.quData.quType === 1 || this.quData.quType === 3
-              || isReadProgramChoiceDisplay(this.quData.quType, this.quData.answerList)) {
+            if (this.quData.quType === 1 || this.quData.quType === 3 ||
+              isReadProgramChoiceDisplay(this.quData.quType, this.quData.answerList)) {
               this.radioValues = an.id
             } else if (this.quData.quType === 2) {
               this.multiValues.push(an.id)

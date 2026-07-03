@@ -67,14 +67,28 @@ logging:
 # API调用配置
 exam:
   ai:
+    provider: openai
     base-url: https://api.deepseek.com
     api-key: ${DEEPSEEK_API_KEY:}
+    # 考试系统上传试卷文档后，自动上传到 RAGFlow 知识库并触发解析
+    ragflow-auto-upload: true
+    ragflow-base-url: http://localhost:9380
+    ragflow-api-key: ${RAGFLOW_API_KEY:}
+    # 可选：指定知识库 ID；为空时调用 /api/v1/datasets 列表接口自动获取
+    ragflow-dataset-id: ${RAGFLOW_DATASET_ID:}
+    # 可选：dataset-id 为空时，按知识库名称匹配；也为空则取列表第一个
+    ragflow-dataset-name: ${RAGFLOW_DATASET_NAME:}
+    ragflow-dataset-page-size: 10
+    ragflow-upload-fail-fast: false
+    ragflow-upload-timeout-seconds: 120
     model-name: deepseek-v4-flash
     timeout-seconds: 180
+    # 切回 DeepSeek 时使用:
     max-text-length: 20000
     normalize-batch-length: 10000
     normalize-batch-question-count: 20
     normalize-concurrency: 3
-    ai-concurrency: 3
+    # 本地 RAGFlow 对并发聊天解析更敏感，先串行处理批次，避免一批文件拆成多批后同时失败
+    ai-concurrency: 2
     parse-fallback-ratio: 0.3
     parse-fallback-min-expected: 3

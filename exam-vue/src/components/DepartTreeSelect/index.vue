@@ -14,9 +14,9 @@
       :props="props"
       :expand-on-click-node="false"
       :filter-node-method="filterNode"
+      :check-strictly="false"
       placeholder="选择部门"
       class="select-tree"
-      :check-strictly="false"
       highlight-current
       default-expand-all
       @node-click="onClickNode"

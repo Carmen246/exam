@@ -69,12 +69,22 @@ public class QuestionImportBatchProcessor {
             if (QuestionBoundaryHelper.isIgnorableImportFragment(chunk)) {
                 return BatchProcessResult.success(new ArrayList<>(), false);
             }
-            state.setPhase(QuestionImportBatchState.PHASE_DEEP_NORMALIZE);
-            String deepText = questionAiParseService.normalizeSingleBatch(localText, batchNo);
-            state.setPhase(retrying ? QuestionImportBatchState.PHASE_RETRY : QuestionImportBatchState.PHASE_PARSE);
-            List<QuDetailDTO> questions = parseBatchText(deepText, baseReq, batchNo);
-            return BatchProcessResult.success(questions, true);
+            try {
+                state.setPhase(QuestionImportBatchState.PHASE_DEEP_NORMALIZE);
+                String deepText = questionAiParseService.normalizeSingleBatch(localText, batchNo);
+                state.setPhase(retrying ? QuestionImportBatchState.PHASE_RETRY : QuestionImportBatchState.PHASE_PARSE);
+                List<QuDetailDTO> questions = parseBatchText(deepText, baseReq, batchNo);
+                return BatchProcessResult.success(questions, true);
+            } catch (Exception deepError) {
+                throw new ServiceException("快速解析失败：" + safeMessage(e)
+                        + "；深度清洗/解析仍失败：" + safeMessage(deepError));
+            }
         }
+    }
+
+    private String safeMessage(Exception e) {
+        String message = e == null ? "" : e.getMessage();
+        return StringUtils.defaultIfBlank(message, "未知错误");
     }
 
     private List<QuDetailDTO> parseBatchText(String text, QuestionParseReqDTO baseReq, String batchNo) {
