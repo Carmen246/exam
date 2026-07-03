@@ -356,7 +356,7 @@ public class QuServiceImpl extends ServiceImpl<QuMapper, Qu> implements QuServic
         }
 
         if (QuType.PROGRAM.equals(qu.getQuType())) {
-            if (containsCodeBlock(qu.getContent())) {
+            if (containsProgramSkeleton(qu.getContent())) {
                 throw new ServiceException(1, no + "编程题 content 应只存题干，程序代码请放在参考答案中！");
             }
             if (CollectionUtils.isEmpty(answers)) {
@@ -364,7 +364,7 @@ public class QuServiceImpl extends ServiceImpl<QuMapper, Qu> implements QuServic
             }
             boolean hasCode = false;
             for (QuAnswerDTO a : answers) {
-                if (!StringUtils.isEmpty(a.getContent()) && containsCodeBlock(a.getContent())) {
+                if (!StringUtils.isEmpty(a.getContent()) && containsProgramSkeleton(a.getContent())) {
                     hasCode = true;
                 }
                 if (StringUtils.isEmpty(a.getContent())) {
@@ -415,6 +415,10 @@ public class QuServiceImpl extends ServiceImpl<QuMapper, Qu> implements QuServic
 
     private boolean containsCodeBlock(String text) {
         return programContentFormatter.containsCodeBlock(text);
+    }
+
+    private boolean containsProgramSkeleton(String text) {
+        return programContentFormatter.containsProgramSkeleton(text);
     }
 
     private boolean isReadProgramChoiceAnswers(List<QuAnswerDTO> answers) {

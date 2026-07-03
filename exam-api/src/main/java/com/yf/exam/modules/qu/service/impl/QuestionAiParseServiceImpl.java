@@ -90,7 +90,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     + "content=题干+完整程序(无空位)，有选项时answerList存全部选项，无选项时answerList=运行结果，不要把程序放进 answerList。"
                     + "如果题目要求“编写程序”且只给需求无现成代码骨架，解析为编程题(7)；"
                     + "content=仅题干，禁止把程序写进 content；若答案文档提供完整参考程序则answerList[0]=完整参考程序，"
-                    + "若没有完整参考程序则answerList=[]，也必须输出该题，禁止跳过。"
+                    + "若未提供参考程序且题干信息足够明确，必须根据题干补写一份完整C语言参考程序代码放入answerList[0]；"
+                    + "只有题干缺少关键条件导致无法补写时才允许answerList=[]，也必须输出该题，禁止跳过，禁止把题干/需求说明/解析文字作为参考程序。"
                     + "如果题目要求“改错/改正/找出错误”，解析为程序改错题(8)；"
                     + "content=题干+有错程序，answerList=改正后程序。"
                     + "如果题目属于综合应用，解析为综合应用题(9)。"
@@ -104,7 +105,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     + "若原题有A/B/C/D选项，answerList存全部选项(与单选题相同)，仅一个isRight=true，"
                     + "content中不要重复放选项。"
                     + "编程题(7)：content=仅题干，禁止把程序写进 content；若有完整参考程序则answerList[0]=完整参考程序，"
-                    + "若无完整参考程序则answerList=[]，也必须输出该题，禁止跳过。"
+                    + "若无完整参考程序且题干信息足够明确，必须根据题干补写一份完整C语言参考程序代码放入answerList[0]；"
+                    + "只有题干缺少关键条件导致无法补写时才允许answerList=[]，也必须输出该题，禁止跳过，禁止把题干/需求说明/解析文字作为参考程序。"
                     + "程序改错题(8)：content=题干+有错程序，answerList=改正后程序；关键词“改错/改正/错误”。"
                     + "小节标题如\"3 填空题\"\"5 编程题\"只作为题型上下文，不要把小节标题、书名、章节名、学习指导标题输出为题目；"
                     + "填空题小节一律 quType=5(程序填空题)，即使代码看似有错也禁止改为8；"
@@ -899,7 +901,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 + "   - 识别特征：只给题目需求/功能描述，要求学生编写完整程序，无现成代码骨架。\n"
                 + "   - 关键词：编写程序、写程序、编程实现。\n"
                 + "   - content=仅题干文字，禁止把程序写进 content。\n"
-                + "   - 如果答案文档提供完整参考程序，answerList[0]=完整参考程序；如果没有完整参考程序，answerList=[]，也必须输出该题，禁止跳过。\n"
+                + "   - 如果答案文档提供完整参考程序，answerList[0]=完整参考程序；如果没有完整参考程序但题干信息足够明确，必须根据题干补写一份完整C语言参考程序代码放入 answerList[0]。\n"
+                + "   - 只有题干缺少关键条件导致无法补写参考程序时，answerList=[]，也必须输出该题，禁止跳过；禁止把题干、需求说明、解析文字当作参考程序。\n"
                 + "9. 程序改错题 quType=8（重点）：\n"
                 + "   - 识别特征：给出有错程序，要求找出错误并改正。\n"
                 + "   - 关键词：改错、改正、错误、请修改。\n"
@@ -1783,10 +1786,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     }
 
     private boolean looksLikeProgramSkeleton(String text) {
-        if (StringUtils.isBlank(text)) {
-            return false;
-        }
-        return containsCodeBlock(text) && (text.contains("{") || text.contains("#include"));
+        return programContentFormatter.containsProgramSkeleton(text);
     }
 
     /**
@@ -1822,19 +1822,11 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
     private void splitProgramQuestion(QuDetailDTO qu) {
         String content = qu.getContent().trim();
+        sanitizeProgramReferenceAnswers(qu);
 
         if (!CollectionUtils.isEmpty(qu.getAnswerList())) {
-            boolean hasCodeAnswer = false;
-            for (QuAnswerDTO answer : qu.getAnswerList()) {
-                if (answer != null && containsCodeBlock(answer.getContent())) {
-                    hasCodeAnswer = true;
-                    break;
-                }
-            }
-            if (hasCodeAnswer) {
-                qu.setContent(stripEmbeddedCode(content));
-                return;
-            }
+            qu.setContent(stripEmbeddedProgramCode(content));
+            return;
         }
 
         int codeStart = findCodeBlockStart(content);
@@ -1844,7 +1836,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
         String stem = content.substring(0, codeStart).trim();
         String code = content.substring(codeStart).trim();
-        if (StringUtils.isBlank(stem) || !containsCodeBlock(code)) {
+        if (StringUtils.isBlank(stem) || !looksLikeProgramSkeleton(code)) {
             return;
         }
 
@@ -1861,11 +1853,25 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             qu.getAnswerList().add(answer);
         } else {
             QuAnswerDTO first = qu.getAnswerList().get(0);
-            if (StringUtils.isBlank(first.getContent()) || !containsCodeBlock(first.getContent())) {
+            if (StringUtils.isBlank(first.getContent()) || !looksLikeProgramSkeleton(first.getContent())) {
                 first.setContent(code);
                 first.setIsRight(true);
             }
         }
+    }
+
+    private void sanitizeProgramReferenceAnswers(QuDetailDTO qu) {
+        if (!QuType.PROGRAM.equals(qu.getQuType()) || CollectionUtils.isEmpty(qu.getAnswerList())) {
+            return;
+        }
+
+        List<QuAnswerDTO> validAnswers = new ArrayList<>();
+        for (QuAnswerDTO answer : qu.getAnswerList()) {
+            if (answer != null && looksLikeProgramSkeleton(answer.getContent())) {
+                validAnswers.add(answer);
+            }
+        }
+        qu.setAnswerList(validAnswers);
     }
 
     private void splitReferenceFromContent(QuDetailDTO qu, String analysis) {
@@ -1900,6 +1906,14 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     private String stripEmbeddedCode(String content) {
         int codeStart = findCodeBlockStart(content);
         if (codeStart > 0) {
+            return content.substring(0, codeStart).trim();
+        }
+        return content;
+    }
+
+    private String stripEmbeddedProgramCode(String content) {
+        int codeStart = findCodeBlockStart(content);
+        if (codeStart > 0 && looksLikeProgramSkeleton(content.substring(codeStart))) {
             return content.substring(0, codeStart).trim();
         }
         return content;
@@ -2058,6 +2072,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         }
 
         if (QuType.PROGRAM.equals(qu.getQuType())) {
+            sanitizeProgramReferenceAnswers(qu);
             if (CollectionUtils.isEmpty(qu.getAnswerList())) {
                 if (strictProgramAnswer) {
                     throw new ServiceException("第" + index + "题编程题缺少参考程序代码");
@@ -2066,7 +2081,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             }
             boolean hasCode = false;
             for (QuAnswerDTO answer : qu.getAnswerList()) {
-                if (answer != null && containsCodeBlock(answer.getContent())) {
+                if (answer != null && looksLikeProgramSkeleton(answer.getContent())) {
                     hasCode = true;
                     break;
                 }
@@ -2074,7 +2089,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             if (!hasCode && strictProgramAnswer) {
                 throw new ServiceException("第" + index + "题编程题的参考答案必须是程序代码");
             }
-            qu.setContent(stripEmbeddedCode(qu.getContent()));
+            qu.setContent(stripEmbeddedProgramCode(qu.getContent()));
         }
 
         if (CollectionUtils.isEmpty(qu.getAnswerList())) {

@@ -137,6 +137,13 @@ public class ProgramContentFormatter {
         return findCodeBlockStart(text) >= 0;
     }
 
+    public boolean containsProgramSkeleton(String text) {
+        if (StringUtils.isBlank(text)) {
+            return false;
+        }
+        return containsCodeBlock(text) && (text.contains("{") || text.contains("#include"));
+    }
+
     public int findCodeBlockStart(String text) {
         if (StringUtils.isBlank(text)) {
             return -1;

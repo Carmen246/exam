@@ -187,6 +187,33 @@ class QuestionAiParseServiceImplFilterTest {
     }
 
     @Test
+    void removesStemTextFromProgramReferenceAnswer() throws Exception {
+        QuestionAiParseServiceImpl service = new QuestionAiParseServiceImpl();
+        inject(service, "programContentFormatter", new ProgramContentFormatter());
+
+        QuestionParseReqDTO reqDTO = new QuestionParseReqDTO();
+        reqDTO.setText("五、程序设计题（本大题共3小题，每小题10分，共30分）\n"
+                + "2. 有分段函数如下定义：编写一个函数 float fx(float x)，要求给一个 x，"
+                + "根据分段函数返回 y 的值，主函数调用 fx，完成对键盘输入的 x，输出计算结果，小数点后留 2 位。");
+        reqDTO.setRepoIds(Arrays.asList("repo-1"));
+
+        QuDetailDTO question = programQuestion(
+                "有分段函数如下定义：编写一个函数 float fx(float x)，要求给一个 x，"
+                        + "根据分段函数返回 y 的值，主函数调用 fx，完成对键盘输入的 x，输出计算结果，小数点后留 2 位。",
+                "float fx(float x)，要求给一个 x，根据分段函数返回 y 的值，主函数调用 fx，"
+                        + "完成对键盘输入的 x，输出计算结果，小数点后留 2 位。");
+        QuestionParseRespDTO respDTO = new QuestionParseRespDTO();
+        respDTO.setQuestions(new ArrayList<>(Arrays.asList(question)));
+
+        normalizeAndCheck(service, respDTO, reqDTO);
+
+        question = respDTO.getQuestions().get(0);
+        assertTrue(question.getContent().contains("float fx(float x)"));
+        assertTrue(question.getContent().contains("输出计算结果"));
+        assertTrue(question.getAnswerList().isEmpty());
+    }
+
+    @Test
     void promptsMustNotSkipProgramDesignQuestionsWithoutReferenceProgram() throws Exception {
         QuestionAiParseServiceImpl service = new QuestionAiParseServiceImpl();
 
@@ -200,8 +227,14 @@ class QuestionAiParseServiceImplFilterTest {
 
         assertTrue(systemPrompt.contains("answerList=[]"));
         assertTrue(systemPrompt.contains("也必须输出该题"));
+        assertTrue(systemPrompt.contains("补写"));
+        assertTrue(systemPrompt.contains("禁止把题干"));
+        assertTrue(systemPrompt.contains("题干信息足够明确"));
         assertTrue(userPrompt.contains("answerList=[]"));
         assertTrue(userPrompt.contains("禁止跳过"));
+        assertTrue(userPrompt.contains("补写"));
+        assertTrue(userPrompt.contains("禁止把题干"));
+        assertTrue(userPrompt.contains("题干信息足够明确"));
     }
 
     @Test

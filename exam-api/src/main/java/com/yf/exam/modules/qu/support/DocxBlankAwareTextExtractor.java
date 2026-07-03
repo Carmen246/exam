@@ -18,12 +18,22 @@ import java.math.BigInteger;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 从 docx 提取文本，优先识别下划线/高亮 run 作为程序填空答案
  */
 @Component
 public class DocxBlankAwareTextExtractor {
+
+    private static final String UNREADABLE_IMAGE_PLACEHOLDER =
+            "【图片内容未识别，请将图片中的公式/题干转为文字后再导入】";
+
+    private static final Pattern OFFICE_MATH_BLOCK = Pattern.compile(
+            "<(?:\\w+:)?oMath(?:\\s[^>]*)?>.*?</(?:\\w+:)?oMath>", Pattern.DOTALL);
+    private static final Pattern XML_TEXT_NODE = Pattern.compile(
+            "<(?:\\w+:)?t(?:\\s[^>]*)?>(.*?)</(?:\\w+:)?t>", Pattern.DOTALL);
 
     @Autowired
     private FillProgramBlankProcessor blankProcessor;
@@ -76,6 +86,8 @@ public class DocxBlankAwareTextExtractor {
                 }
             }
         }
+        appendOfficeMathText(sb, extractOfficeMathText(paragraph));
+        appendUnreadableImagePlaceholder(sb, extractUnreadableImagePlaceholder(paragraph));
         return sb.toString();
     }
 
@@ -91,7 +103,14 @@ public class DocxBlankAwareTextExtractor {
 
     private void appendParagraph(StringBuilder sb, XWPFParagraph paragraph, Map<String, Integer> numberingCounters) {
         List<XWPFRun> runs = paragraph.getRuns();
+        String mathText = extractOfficeMathText(paragraph);
+        String imageText = extractUnreadableImagePlaceholder(paragraph);
         if (runs == null || runs.isEmpty()) {
+            if (StringUtils.isNotBlank(mathText)) {
+                appendListNumberIfNeeded(sb, paragraph, mathText, numberingCounters);
+                sb.append(mathText);
+            }
+            appendUnreadableImagePlaceholder(sb, imageText);
             sb.append("\n");
             return;
         }
@@ -102,9 +121,63 @@ public class DocxBlankAwareTextExtractor {
             appendRun(paragraphText, fillBuffer, run);
         }
         flushFillBuffer(paragraphText, fillBuffer);
+        appendOfficeMathText(paragraphText, mathText);
+        appendUnreadableImagePlaceholder(paragraphText, imageText);
         appendListNumberIfNeeded(sb, paragraph, paragraphText.toString(), numberingCounters);
         sb.append(paragraphText);
         sb.append("\n");
+    }
+
+    private void appendOfficeMathText(StringBuilder sb, String mathText) {
+        if (StringUtils.isBlank(mathText) || sb.indexOf(mathText) >= 0) {
+            return;
+        }
+        if (sb.length() > 0 && !Character.isWhitespace(sb.charAt(sb.length() - 1))) {
+            sb.append(' ');
+        }
+        sb.append(mathText);
+    }
+
+    private void appendUnreadableImagePlaceholder(StringBuilder sb, String imageText) {
+        if (StringUtils.isBlank(imageText) || sb.indexOf(imageText) >= 0) {
+            return;
+        }
+        if (sb.length() > 0 && !Character.isWhitespace(sb.charAt(sb.length() - 1))) {
+            sb.append(' ');
+        }
+        sb.append(imageText);
+    }
+
+    private String extractUnreadableImagePlaceholder(XWPFParagraph paragraph) {
+        String xml = paragraph.getCTP().xmlText();
+        if (xml.contains("<w:drawing") || xml.contains("<w:pict")
+                || xml.contains("<v:shape") || xml.contains("<v:imagedata")
+                || xml.contains("<pic:pic")) {
+            return UNREADABLE_IMAGE_PLACEHOLDER;
+        }
+        return "";
+    }
+
+    private String extractOfficeMathText(XWPFParagraph paragraph) {
+        String xml = paragraph.getCTP().xmlText();
+        Matcher blockMatcher = OFFICE_MATH_BLOCK.matcher(xml);
+        StringBuilder sb = new StringBuilder();
+        while (blockMatcher.find()) {
+            Matcher textMatcher = XML_TEXT_NODE.matcher(blockMatcher.group());
+            while (textMatcher.find()) {
+                sb.append(unescapeXmlText(textMatcher.group(1)));
+            }
+            sb.append(' ');
+        }
+        return sb.toString().trim();
+    }
+
+    private String unescapeXmlText(String text) {
+        return text.replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&")
+                .replace("&quot;", "\"")
+                .replace("&apos;", "'");
     }
 
     private void appendListNumberIfNeeded(StringBuilder sb, XWPFParagraph paragraph, String text,

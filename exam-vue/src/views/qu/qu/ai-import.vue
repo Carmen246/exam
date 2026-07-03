@@ -207,7 +207,7 @@
                       <el-tag :type="quTypeTag(item.quType)" size="mini">{{ quTypeLabel(item.quType) }}</el-tag>
                       <span class="question-index">{{ index + 1 }}.</span>
                     </div>
-                    <div v-if="isSubjectiveQuType(item.quType) && !isStemCodeQuType(item.quType)" class="answer-section-title">题干</div>
+                    <div v-if="isSubjectiveQuType(item.quType) && !isStemCodeQuType(item.quType) && !isProgramQuType(item.quType)" class="answer-section-title">题干</div>
                     <template v-if="isStemCodeQuType(item.quType)">
                       <div class="answer-section-title">题干</div>
                       <formatted-text
