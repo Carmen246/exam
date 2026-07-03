@@ -21,6 +21,7 @@ import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.VerticalAlignment;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.util.CellRangeAddress;
+import org.apache.poi.xssf.streaming.SXSSFSheet;
 import org.apache.poi.xssf.streaming.SXSSFWorkbook;
 import org.apache.poi.xssf.usermodel.XSSFClientAnchor;
 import org.apache.poi.xssf.usermodel.XSSFRichTextString;
@@ -169,7 +170,9 @@ public class ExportExcel {
 	 */
 	private void initialize(String title, List<String> headerList) {
 		this.wb = new SXSSFWorkbook(500);
-		this.sheet = wb.createSheet("Export");
+		SXSSFSheet exportSheet = wb.createSheet("Export");
+		exportSheet.trackAllColumnsForAutoSizing();
+		this.sheet = exportSheet;
 		this.styles = createStyles(wb);
 		// Create title
 		if (StringUtils.isNotBlank(title)){
