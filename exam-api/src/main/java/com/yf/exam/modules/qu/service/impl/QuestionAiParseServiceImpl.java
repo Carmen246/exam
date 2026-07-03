@@ -66,6 +66,8 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     private static final Pattern INLINE_OPTION_PATTERN = Pattern.compile(
             "(?s)([A-D])\\s*" + CHOICE_MARKER + "\\s*(.*?)(?=(?:\\s+)?[A-D]\\s*"
                     + CHOICE_MARKER + "\\s*|$)");
+    private static final Pattern PLAIN_RESULT_ANSWER_LINE = Pattern.compile(
+            "(?im)^\\s*(?:答案|参考答案|运行结果|输出结果)\\s*[:：]\\s*(.+?)\\s*$");
 
     private static final String SYSTEM_PROMPT =
             "你是在线考试系统的试题解析器。你只能返回合法 json，不要返回 Markdown，不要解释，不要使用代码块。"
@@ -413,6 +415,11 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             }
             return resp;
         } catch (ServiceException e) {
+            QuestionParseRespDTO localFallback = tryLocalReadProgramFallback(sourceReq, chunk);
+            if (localFallback != null) {
+                return localFallback;
+            }
+
             List<String> smallerChunks = splitQuestionText(chunk, FALLBACK_PARSE_BATCH_LENGTH,
                     FALLBACK_PARSE_BATCH_QUESTION_COUNT);
             if (smallerChunks.size() <= 1) {
@@ -446,6 +453,163 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             result.setRawJson("{\"batches\":" + JSON.toJSONString(rawJsonList) + "}");
             return result;
         }
+    }
+
+    private QuestionParseRespDTO tryLocalReadProgramFallback(QuestionParseReqDTO sourceReq, String chunk) {
+        List<QuDetailDTO> questions = buildLocalReadProgramQuestions(sourceReq, chunk);
+        if (CollectionUtils.isEmpty(questions)) {
+            return null;
+        }
+
+        QuestionParseRespDTO respDTO = new QuestionParseRespDTO();
+        respDTO.setQuestions(questions);
+        respDTO.setCount(questions.size());
+        respDTO.setRawJson("{\"localFallback\":\"readProgram\"}");
+        normalizeAndCheck(respDTO, copyParseReq(sourceReq, chunk));
+        return respDTO;
+    }
+
+    private List<QuDetailDTO> buildLocalReadProgramQuestions(QuestionParseReqDTO sourceReq, String chunk) {
+        List<QuDetailDTO> questions = new ArrayList<>();
+        if (StringUtils.isBlank(chunk)) {
+            return questions;
+        }
+
+        List<String> blocks = splitQuestionBlocks(chunk);
+        if (CollectionUtils.isEmpty(blocks)) {
+            blocks = new ArrayList<>();
+            blocks.add(chunk);
+        }
+
+        String leadingSection = QuestionBoundaryHelper.findLeadingSectionType(chunk);
+        for (String block : blocks) {
+            String text = stripLeadingSectionHeaders(block);
+            if (!isLocalReadProgramCandidate(text, leadingSection)) {
+                continue;
+            }
+            QuDetailDTO question = buildLocalReadProgramQuestion(sourceReq, text, leadingSection);
+            if (question == null) {
+                return new ArrayList<>();
+            }
+            questions.add(question);
+        }
+        return questions;
+    }
+
+    private QuDetailDTO buildLocalReadProgramQuestion(QuestionParseReqDTO sourceReq, String text, String section) {
+        ProgramChoiceOptions options = extractProgramChoiceOptions(text);
+        List<QuAnswerDTO> answers;
+        String contentSource;
+        if (options != null) {
+            int rightIndex = findAnswerLetterIndexInText(text, options.answers.size());
+            if (rightIndex < 0) {
+                return null;
+            }
+            answers = buildChoiceAnswers(options.answers, rightIndex);
+            contentSource = options.stemCode;
+        } else {
+            String answerText = extractPlainResultAnswer(text);
+            if (StringUtils.isBlank(answerText)) {
+                return null;
+            }
+            answers = new ArrayList<>();
+            answers.add(buildSubjectiveAnswer(answerText, "程序运行结果/参考答案。"));
+            contentSource = stripPlainResultAnswerLines(text);
+        }
+
+        ProgramContentFormatter.StemCodeParts parts = programContentFormatter.splitStemAndCode(contentSource);
+        if (StringUtils.isBlank(parts.getCode())) {
+            return null;
+        }
+
+        QuDetailDTO question = new QuDetailDTO();
+        question.setQuType(QuType.READ_PROGRAM);
+        question.setLevel(sourceReq.getLevel() == null ? 1 : sourceReq.getLevel());
+        question.setRepoIds(sourceReq.getRepoIds());
+        question.setContent(programContentFormatter.mergeStemAndCode(parts.getStem(), parts.getCode()));
+        question.setImage("");
+        question.setRemark("");
+        question.setAnalysis("");
+        question.setAnswerList(answers);
+        return question;
+    }
+
+    private boolean isLocalReadProgramCandidate(String text, String section) {
+        return StringUtils.isNotBlank(text) && containsCodeBlock(text) && isReadProgramContext(text, section);
+    }
+
+    private boolean isReadProgramContext(String text, String section) {
+        Integer sectionType = QuestionBoundaryHelper.inferQuTypeFromSection(section);
+        if (QuType.READ_PROGRAM.equals(sectionType)) {
+            return true;
+        }
+        String value = StringUtils.defaultString(text).replaceAll("\\s+", "");
+        return value.contains("程序阅读")
+                || value.contains("阅读程序")
+                || value.contains("输出结果")
+                || value.contains("运行结果")
+                || value.contains("写出结果");
+    }
+
+    private List<QuAnswerDTO> buildChoiceAnswers(List<String> options, int rightIndex) {
+        List<QuAnswerDTO> answers = new ArrayList<>();
+        for (int i = 0; i < options.size(); i++) {
+            QuAnswerDTO answer = new QuAnswerDTO();
+            answer.setContent(StringUtils.defaultString(options.get(i)).trim());
+            answer.setIsRight(i == rightIndex);
+            answer.setImage("");
+            answer.setAnalysis("");
+            answers.add(answer);
+        }
+        return answers;
+    }
+
+    private QuAnswerDTO buildSubjectiveAnswer(String content, String analysis) {
+        QuAnswerDTO answer = new QuAnswerDTO();
+        answer.setContent(content.trim());
+        answer.setIsRight(true);
+        answer.setImage("");
+        answer.setAnalysis(analysis);
+        return answer;
+    }
+
+    private String stripLeadingSectionHeaders(String text) {
+        if (StringUtils.isBlank(text)) {
+            return text;
+        }
+        StringBuilder result = new StringBuilder();
+        boolean contentStarted = false;
+        for (String line : text.replace("\r\n", "\n").replace("\r", "\n").split("\n")) {
+            String trimmed = line.trim();
+            if (!contentStarted && QuestionBoundaryHelper.isSectionHeaderOnlyFragment(trimmed)) {
+                continue;
+            }
+            if (StringUtils.isBlank(trimmed) && !contentStarted) {
+                continue;
+            }
+            contentStarted = true;
+            if (result.length() > 0) {
+                result.append('\n');
+            }
+            result.append(line);
+        }
+        return result.toString().trim();
+    }
+
+    private String extractPlainResultAnswer(String text) {
+        Matcher matcher = PLAIN_RESULT_ANSWER_LINE.matcher(StringUtils.defaultString(text));
+        String answer = "";
+        while (matcher.find()) {
+            answer = matcher.group(1).trim();
+        }
+        if (StringUtils.isBlank(answer) || optionLetterIndex(answer) >= 0) {
+            return "";
+        }
+        return answer;
+    }
+
+    private String stripPlainResultAnswerLines(String text) {
+        return PLAIN_RESULT_ANSWER_LINE.matcher(StringUtils.defaultString(text)).replaceAll("").trim();
     }
 
     private QuestionParseRespDTO parseQuestionsWithRetry(QuestionParseReqDTO reqDTO, String batchNo) {

@@ -19,6 +19,9 @@ public class PaperRandomWordExportReqDTO implements Serializable {
     @ApiModelProperty(value = "题库ID列表", required = true)
     private List<String> repoIds;
 
+    @ApiModelProperty(value = "题型配置列表")
+    private List<QuestionTypeConfig> types;
+
     @ApiModelProperty(value = "单选题数量")
     private Integer radioCount = 0;
 
@@ -45,4 +48,20 @@ public class PaperRandomWordExportReqDTO implements Serializable {
 
     @ApiModelProperty(value = "是否导出答案解析")
     private Boolean includeAnalysis = true;
+
+    @Data
+    @ApiModel(value = "随机试卷题型配置", description = "随机试卷题型配置")
+    public static class QuestionTypeConfig implements Serializable {
+
+        private static final long serialVersionUID = 1L;
+
+        @ApiModelProperty(value = "题目类型", required = true)
+        private Integer quType;
+
+        @ApiModelProperty(value = "抽题数量")
+        private Integer count = 0;
+
+        @ApiModelProperty(value = "每题分值")
+        private Integer score = 0;
+    }
 }

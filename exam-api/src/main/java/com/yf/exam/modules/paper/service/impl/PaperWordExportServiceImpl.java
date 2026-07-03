@@ -37,6 +37,7 @@ import javax.servlet.http.HttpServletResponse;
 import java.math.BigInteger;
 import java.net.URLEncoder;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 @Service
@@ -45,6 +46,16 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
     private static final int FONT_TITLE = 36;
     private static final int FONT_SECTION = 26;
     private static final int FONT_NORMAL = 22;
+    private static final List<Integer> QUESTION_TYPE_ORDER = Arrays.asList(
+            QuType.RADIO,
+            QuType.MULTI,
+            QuType.JUDGE,
+            QuType.FILL,
+            QuType.FILL_PROGRAM,
+            QuType.READ_PROGRAM,
+            QuType.PROGRAM,
+            QuType.FIX_PROGRAM,
+            QuType.COMPREHENSIVE);
 
     @Autowired
     private PaperService paperService;
@@ -87,9 +98,9 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
 
     @Override
     public void exportRandomWord(PaperRandomWordExportReqDTO reqDTO, HttpServletResponse response) {
-        checkRandomRequest(reqDTO);
+        List<PaperRandomWordExportReqDTO.QuestionTypeConfig> typeConfigs = checkRandomRequest(reqDTO);
 
-        List<PaperQuDetailDTO> quList = buildRandomQuestionList(reqDTO);
+        List<PaperQuDetailDTO> quList = buildRandomQuestionList(reqDTO, typeConfigs);
         if (CollectionUtils.isEmpty(quList)) {
             throw new ServiceException("没有抽取到试题，无法导出！");
         }
@@ -106,32 +117,65 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
         }
     }
 
-    private void checkRandomRequest(PaperRandomWordExportReqDTO reqDTO) {
+    private List<PaperRandomWordExportReqDTO.QuestionTypeConfig> checkRandomRequest(PaperRandomWordExportReqDTO reqDTO) {
         if (reqDTO == null || CollectionUtils.isEmpty(reqDTO.getRepoIds())) {
             throw new ServiceException("题库ID不能为空！");
         }
 
-        int radioCount = safeNumber(reqDTO.getRadioCount());
-        int multiCount = safeNumber(reqDTO.getMultiCount());
-        int judgeCount = safeNumber(reqDTO.getJudgeCount());
-        if (radioCount + multiCount + judgeCount <= 0) {
+        List<PaperRandomWordExportReqDTO.QuestionTypeConfig> typeConfigs = randomTypeConfigs(reqDTO);
+        if (CollectionUtils.isEmpty(typeConfigs)) {
             throw new ServiceException("至少需要设置一种题型的抽题数量！");
         }
+        return typeConfigs;
     }
 
-    private List<PaperQuDetailDTO> buildRandomQuestionList(PaperRandomWordExportReqDTO reqDTO) {
+    private List<PaperQuDetailDTO> buildRandomQuestionList(PaperRandomWordExportReqDTO reqDTO,
+                                                           List<PaperRandomWordExportReqDTO.QuestionTypeConfig> typeConfigs) {
         List<PaperQuDetailDTO> result = new ArrayList<>();
         List<String> excludes = new ArrayList<>();
         excludes.add("none");
 
-        collectRandomQuestions(result, excludes, reqDTO.getRepoIds(), QuType.RADIO,
-                safeNumber(reqDTO.getRadioCount()), safeNumber(reqDTO.getRadioScore()));
-        collectRandomQuestions(result, excludes, reqDTO.getRepoIds(), QuType.MULTI,
-                safeNumber(reqDTO.getMultiCount()), safeNumber(reqDTO.getMultiScore()));
-        collectRandomQuestions(result, excludes, reqDTO.getRepoIds(), QuType.JUDGE,
-                safeNumber(reqDTO.getJudgeCount()), safeNumber(reqDTO.getJudgeScore()));
+        for (PaperRandomWordExportReqDTO.QuestionTypeConfig typeConfig : typeConfigs) {
+            collectRandomQuestions(result, excludes, reqDTO.getRepoIds(), typeConfig.getQuType(),
+                    safeNumber(typeConfig.getCount()), safeNumber(typeConfig.getScore()));
+        }
 
         return result;
+    }
+
+    private List<PaperRandomWordExportReqDTO.QuestionTypeConfig> randomTypeConfigs(PaperRandomWordExportReqDTO reqDTO) {
+        List<PaperRandomWordExportReqDTO.QuestionTypeConfig> result = new ArrayList<>();
+
+        if (!CollectionUtils.isEmpty(reqDTO.getTypes())) {
+            for (PaperRandomWordExportReqDTO.QuestionTypeConfig config : reqDTO.getTypes()) {
+                if (config == null) {
+                    continue;
+                }
+                addTypeConfig(result, config.getQuType(), safeNumber(config.getCount()), safeNumber(config.getScore()));
+            }
+            return result;
+        }
+
+        addTypeConfig(result, QuType.RADIO, safeNumber(reqDTO.getRadioCount()), safeNumber(reqDTO.getRadioScore()));
+        addTypeConfig(result, QuType.MULTI, safeNumber(reqDTO.getMultiCount()), safeNumber(reqDTO.getMultiScore()));
+        addTypeConfig(result, QuType.JUDGE, safeNumber(reqDTO.getJudgeCount()), safeNumber(reqDTO.getJudgeScore()));
+        return result;
+    }
+
+    private void addTypeConfig(List<PaperRandomWordExportReqDTO.QuestionTypeConfig> result,
+                               Integer quType, int count, int score) {
+        if (count <= 0) {
+            return;
+        }
+        if (!QUESTION_TYPE_ORDER.contains(quType)) {
+            throw new ServiceException("不支持的题型：" + quType);
+        }
+
+        PaperRandomWordExportReqDTO.QuestionTypeConfig config = new PaperRandomWordExportReqDTO.QuestionTypeConfig();
+        config.setQuType(quType);
+        config.setCount(count);
+        config.setScore(score);
+        result.add(config);
     }
 
     private void collectRandomQuestions(List<PaperQuDetailDTO> result, List<String> excludes, List<String> repoIds,
@@ -227,6 +271,24 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
         if (QuType.JUDGE.equals(quType)) {
             return "判断题";
         }
+        if (QuType.FILL.equals(quType)) {
+            return "填空题";
+        }
+        if (QuType.FILL_PROGRAM.equals(quType)) {
+            return "程序填空题";
+        }
+        if (QuType.READ_PROGRAM.equals(quType)) {
+            return "阅读程序写结果题";
+        }
+        if (QuType.PROGRAM.equals(quType)) {
+            return "编程题";
+        }
+        if (QuType.FIX_PROGRAM.equals(quType)) {
+            return "程序改错题";
+        }
+        if (QuType.COMPREHENSIVE.equals(quType)) {
+            return "综合应用题";
+        }
         return "试题";
     }
 
@@ -246,14 +308,16 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
         addMetaLine(main, factory, totalScore, totalTime);
         addBlankLine(main, factory);
 
-        List<PaperQuDetailDTO> radioList = filterByType(quList, QuType.RADIO);
-        List<PaperQuDetailDTO> multiList = filterByType(quList, QuType.MULTI);
-        List<PaperQuDetailDTO> judgeList = filterByType(quList, QuType.JUDGE);
-
         int index = 1;
-        index = addQuestionSection(main, factory, "一、单选题", radioList, index);
-        index = addQuestionSection(main, factory, "二、多选题", multiList, index);
-        addQuestionSection(main, factory, "三、判断题", judgeList, index);
+        int sectionIndex = 1;
+        for (Integer quType : QUESTION_TYPE_ORDER) {
+            List<PaperQuDetailDTO> sectionList = filterByType(quList, quType);
+            if (CollectionUtils.isEmpty(sectionList)) {
+                continue;
+            }
+            index = addQuestionSection(main, factory, sectionTitle(sectionIndex, quType), sectionList, index);
+            sectionIndex++;
+        }
 
         if (includeAnswer) {
             addBlankLine(main, factory);
@@ -276,6 +340,18 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
         return result;
     }
 
+    private String sectionTitle(int sectionIndex, Integer quType) {
+        return chineseNumber(sectionIndex) + "、" + typeName(quType);
+    }
+
+    private String chineseNumber(int value) {
+        String[] numbers = {"零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"};
+        if (value >= 0 && value < numbers.length) {
+            return numbers[value];
+        }
+        return String.valueOf(value);
+    }
+
     private int addQuestionSection(MainDocumentPart main, ObjectFactory factory, String title,
                                    List<PaperQuDetailDTO> list, int startIndex) throws Exception {
         if (CollectionUtils.isEmpty(list)) {
@@ -296,7 +372,7 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
             String scoreText = qu.getScore() == null ? "" : "（" + qu.getScore() + "分）";
             addParagraph(main, factory, index + ". " + clean(qu.getContent()) + scoreText, true, false, FONT_NORMAL);
 
-            if (!CollectionUtils.isEmpty(qu.getAnswerList())) {
+            if (shouldShowOptions(qu)) {
                 for (PaperQuAnswerExtDTO answer : qu.getAnswerList()) {
                     addParagraph(main, factory, "    " + clean(answer.getAbc()) + ". " + clean(answer.getContent()),
                             false, false, FONT_NORMAL);
@@ -306,6 +382,16 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
             index++;
         }
         return index;
+    }
+
+    private boolean shouldShowOptions(PaperQuDetailDTO qu) {
+        if (qu == null || CollectionUtils.isEmpty(qu.getAnswerList())) {
+            return false;
+        }
+        if (QuType.isObjective(qu.getQuType())) {
+            return true;
+        }
+        return QuType.READ_PROGRAM.equals(qu.getQuType()) && qu.getAnswerList().size() > 1;
     }
 
     private void addAnswerSection(MainDocumentPart main, ObjectFactory factory, List<PaperQuDetailDTO> quList) throws Exception {
@@ -347,11 +433,16 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
 
         List<String> rightAnswers = new ArrayList<>();
         for (PaperQuAnswerExtDTO answer : qu.getAnswerList()) {
-            if (Boolean.TRUE.equals(answer.getIsRight())) {
+            if (shouldShowOptions(qu) && Boolean.TRUE.equals(answer.getIsRight())) {
                 rightAnswers.add(clean(answer.getAbc()));
+            } else if (!shouldShowOptions(qu) && !Boolean.FALSE.equals(answer.getIsRight())) {
+                String content = clean(answer.getContent());
+                if (StringUtils.isNotBlank(content)) {
+                    rightAnswers.add(content);
+                }
             }
         }
-        return StringUtils.join(rightAnswers, "、");
+        return StringUtils.join(rightAnswers, shouldShowOptions(qu) ? "、" : "；");
     }
 
     private void addMetaLine(MainDocumentPart main, ObjectFactory factory, Integer totalScore, Integer totalTime) throws Exception {

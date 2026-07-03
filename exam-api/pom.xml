@@ -103,7 +103,7 @@
 
         <dependency>
             <groupId>org.docx4j</groupId>
-            <artifactId>docx4j-JAXB-Internal</artifactId>
+            <artifactId>docx4j-JAXB-ReferenceImpl</artifactId>
             <version>${docx4j.version}</version>
         </dependency>
         <!-- WEB支持 -->

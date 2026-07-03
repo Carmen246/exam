@@ -109,7 +109,7 @@
     <el-dialog
       :visible.sync="wordExportVisible"
       title="生成试卷Word"
-      width="620px"
+      width="640px"
     >
       <el-form
         ref="wordExportForm"
@@ -127,58 +127,60 @@
         </el-form-item>
 
         <el-form-item label="题型配置">
-          <div class="word-export-grid">
-            <div class="word-export-header">题型</div>
-            <div class="word-export-header">抽题数量</div>
-            <div class="word-export-header">每题分值</div>
+          <div class="word-export-type-list">
+            <div class="word-export-row word-export-header-row">
+              <div class="word-export-header">题型</div>
+              <div class="word-export-header">抽题数量</div>
+              <div class="word-export-header">每题分值</div>
+              <div />
+            </div>
 
-            <div class="word-export-type">单选题</div>
-            <el-input-number
-              v-model="wordExportForm.radioCount"
-              :min="0"
-              :max="200"
-              :controls="false"
-              class="word-export-number"
-            />
-            <el-input-number
-              v-model="wordExportForm.radioScore"
-              :min="0"
-              :max="100"
-              :controls="false"
-              class="word-export-number"
-            />
+            <div
+              v-for="(item, index) in wordExportForm.types"
+              :key="item.rowId"
+              class="word-export-row"
+            >
+              <el-select v-model="item.quType" class="word-export-type-select" placeholder="题型">
+                <el-option
+                  v-for="type in quTypes"
+                  :key="type.value"
+                  :label="type.label"
+                  :value="type.value"
+                  :disabled="isWordExportTypeDisabled(type.value, index)"
+                />
+              </el-select>
+              <el-input-number
+                v-model="item.count"
+                :min="0"
+                :max="200"
+                :controls="false"
+                class="word-export-number"
+              />
+              <el-input-number
+                v-model="item.score"
+                :min="0"
+                :max="100"
+                :controls="false"
+                class="word-export-number"
+              />
+              <el-button
+                :disabled="wordExportForm.types.length <= 1"
+                type="danger"
+                icon="el-icon-delete"
+                circle
+                size="mini"
+                @click="removeWordExportType(index)"
+              />
+            </div>
 
-            <div class="word-export-type">多选题</div>
-            <el-input-number
-              v-model="wordExportForm.multiCount"
-              :min="0"
-              :max="200"
-              :controls="false"
-              class="word-export-number"
-            />
-            <el-input-number
-              v-model="wordExportForm.multiScore"
-              :min="0"
-              :max="100"
-              :controls="false"
-              class="word-export-number"
-            />
-
-            <div class="word-export-type">判断题</div>
-            <el-input-number
-              v-model="wordExportForm.judgeCount"
-              :min="0"
-              :max="200"
-              :controls="false"
-              class="word-export-number"
-            />
-            <el-input-number
-              v-model="wordExportForm.judgeScore"
-              :min="0"
-              :max="100"
-              :controls="false"
-              class="word-export-number"
-            />
+            <el-button
+              type="text"
+              icon="el-icon-plus"
+              :disabled="wordExportForm.types.length >= quTypes.length"
+              @click="addWordExportType"
+            >
+              添加题型
+            </el-button>
           </div>
         </el-form-item>
 
@@ -208,6 +210,7 @@ import DataTable from '@/components/DataTable'
 import RepoSelect from '@/components/RepoSelect'
 import { batchAction } from '@/api/qu/repo'
 import { exportExcel, exportRandomWord, importExcel, importTemplate } from '@/api/qu/qu'
+import { QU_TYPE_OPTIONS } from '@/filters'
 
 export default {
   name: 'QuList',
@@ -227,12 +230,11 @@ export default {
       wordExportForm: {
         title: '随机试卷',
         repoIds: [],
-        radioCount: 5,
-        radioScore: 2,
-        multiCount: 3,
-        multiScore: 3,
-        judgeCount: 2,
-        judgeScore: 1,
+        types: [
+          { rowId: 'radio', quType: 1, count: 5, score: 2 },
+          { rowId: 'multi', quType: 2, count: 3, score: 3 },
+          { rowId: 'judge', quType: 3, count: 2, score: 1 }
+        ],
         totalTime: 60,
         includeAnswer: true,
         includeAnalysis: true
@@ -256,44 +258,7 @@ export default {
         }
       },
 
-      quTypes: [
-        {
-          value: 1,
-          label: '单选题'
-        },
-        {
-          value: 2,
-          label: '多选题'
-        },
-        {
-          value: 3,
-          label: '判断题'
-        },
-        {
-          value: 4,
-          label: '填空题'
-        },
-        {
-          value: 5,
-          label: '程序填空题'
-        },
-        {
-          value: 6,
-          label: '阅读程序写结果题'
-        },
-        {
-          value: 7,
-          label: '编程题'
-        },
-        {
-          value: 8,
-          label: '程序改错题'
-        },
-        {
-          value: 9,
-          label: '综合应用题'
-        }
-      ],
+      quTypes: QU_TYPE_OPTIONS,
 
       options: {
 
@@ -375,6 +340,10 @@ export default {
         this.wordExportForm.repoIds = this.listQuery.params.repoIds
       }
 
+      if (!this.wordExportForm.types || this.wordExportForm.types.length === 0) {
+        this.wordExportForm.types = [this.newWordExportType(1, 0, 1)]
+      }
+
       this.$nextTick(() => {
         if (this.$refs.wordExportForm) {
           this.$refs.wordExportForm.clearValidate()
@@ -388,22 +357,81 @@ export default {
           return
         }
 
-        const totalCount = Number(this.wordExportForm.radioCount || 0) +
-          Number(this.wordExportForm.multiCount || 0) +
-          Number(this.wordExportForm.judgeCount || 0)
+        const typeConfigs = this.wordExportForm.types
+          .filter(item => Number(item.count || 0) > 0)
+          .map(item => ({
+            quType: item.quType,
+            count: Number(item.count || 0),
+            score: Number(item.score || 0)
+          }))
 
-        if (totalCount <= 0) {
+        if (typeConfigs.length === 0) {
           this.$message.warning('请至少设置一种题型的抽题数量！')
           return
         }
 
+        const invalidType = typeConfigs.find(item => !item.quType)
+        if (invalidType) {
+          this.$message.warning('请选择题型！')
+          return
+        }
+
+        const invalidScore = typeConfigs.find(item => item.score <= 0)
+        if (invalidScore) {
+          this.$message.warning('已设置抽题数量的题型，每题分值必须大于0！')
+          return
+        }
+
+        const duplicateTypes = typeConfigs
+          .map(item => item.quType)
+          .filter((value, index, arr) => arr.indexOf(value) !== index)
+        if (duplicateTypes.length > 0) {
+          this.$message.warning('题型不能重复配置！')
+          return
+        }
+
+        const payload = {
+          ...this.wordExportForm,
+          types: typeConfigs
+        }
+
         this.wordExportLoading = true
-        exportRandomWord(this.wordExportForm).then(() => {
+        exportRandomWord(payload).then(() => {
           this.wordExportVisible = false
         }).finally(() => {
           this.wordExportLoading = false
         })
       })
+    },
+
+    newWordExportType(quType, count, score) {
+      return {
+        rowId: new Date().getTime() + '-' + Math.random(),
+        quType: quType,
+        count: count,
+        score: score
+      }
+    },
+
+    addWordExportType() {
+      const usedTypes = this.wordExportForm.types.map(item => item.quType)
+      const nextType = this.quTypes.find(item => usedTypes.indexOf(item.value) === -1)
+      if (!nextType) {
+        this.$message.warning('全部题型都已经添加！')
+        return
+      }
+      this.wordExportForm.types.push(this.newWordExportType(nextType.value, 0, 1))
+    },
+
+    removeWordExportType(index) {
+      if (this.wordExportForm.types.length <= 1) {
+        return
+      }
+      this.wordExportForm.types.splice(index, 1)
+    },
+
+    isWordExportTypeDisabled(value, currentIndex) {
+      return this.wordExportForm.types.some((item, index) => index !== currentIndex && item.quType === value)
     },
 
     downloadTemplate() {
@@ -447,12 +475,20 @@ export default {
 </script>
 
 <style scoped>
-.word-export-grid {
+.word-export-type-list {
+  width: 100%;
+}
+
+.word-export-row {
   display: grid;
-  grid-template-columns: 90px 120px 120px;
-  grid-row-gap: 10px;
-  grid-column-gap: 16px;
+  grid-template-columns: minmax(180px, 1fr) 120px 120px 32px;
+  grid-column-gap: 12px;
   align-items: center;
+  margin-bottom: 10px;
+}
+
+.word-export-header-row {
+  margin-bottom: 8px;
 }
 
 .word-export-header {
@@ -461,9 +497,8 @@ export default {
   line-height: 1;
 }
 
-.word-export-type {
-  color: #303133;
-  font-weight: 500;
+.word-export-type-select {
+  width: 100%;
 }
 
 .word-export-number {
