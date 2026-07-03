@@ -24,13 +24,23 @@
         <result column="radio_count" property="radioCount" />
         <result column="multi_count" property="multiCount" />
         <result column="judge_count" property="judgeCount" />
+        <result column="type_totals" property="typeTotals" />
     </resultMap>
 
     <select id="paging" resultMap="ListResultMap">
         SELECT `id`, `code`, `title`, `remark`, `create_time`, `update_time`,
         (SELECT COUNT(0) FROM el_qu_repo WHERE repo_id=repo.id AND qu_type=1) AS radio_count,
         (SELECT COUNT(0) FROM el_qu_repo WHERE repo_id=repo.id AND qu_type=2) AS multi_count,
-        (SELECT COUNT(0) FROM el_qu_repo WHERE repo_id=repo.id AND qu_type=3) AS judge_count
+        (SELECT COUNT(0) FROM el_qu_repo WHERE repo_id=repo.id AND qu_type=3) AS judge_count,
+        COALESCE((
+            SELECT CONCAT('{', GROUP_CONCAT(CONCAT('"', type_counts.qu_type, '":', type_counts.type_count) ORDER BY type_counts.qu_type SEPARATOR ','), '}')
+            FROM (
+                SELECT repo_id, qu_type, COUNT(0) AS type_count
+                FROM el_qu_repo
+                GROUP BY repo_id, qu_type
+            ) type_counts
+            WHERE type_counts.repo_id=repo.id
+        ), '{}') AS type_totals
         FROM el_repo repo
         <where>
             <if test="query!=null">

@@ -9,6 +9,7 @@ import com.yf.exam.modules.exam.dto.ext.ExamRepoExtDTO;
 import com.yf.exam.modules.exam.entity.ExamRepo;
 import com.yf.exam.modules.exam.mapper.ExamRepoMapper;
 import com.yf.exam.modules.exam.service.ExamRepoService;
+import com.yf.exam.modules.exam.support.ExamRepoTypeConfigUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
@@ -40,6 +41,10 @@ public class ExamRepoServiceImpl extends ServiceImpl<ExamRepoMapper, ExamRepo> i
         if(CollectionUtils.isEmpty(list)){
             throw new ServiceException(1, "必须选择题库！");
         }
+        for (ExamRepoExtDTO item : list) {
+            ExamRepoTypeConfigUtils.syncBeforeSave(item);
+        }
+
         List<ExamRepo> repos = BeanMapper.mapList(list, ExamRepo.class);
         for(ExamRepo item: repos){
             item.setExamId(examId);
@@ -51,7 +56,13 @@ public class ExamRepoServiceImpl extends ServiceImpl<ExamRepoMapper, ExamRepo> i
 
     @Override
     public List<ExamRepoExtDTO> listByExam(String examId) {
-        return baseMapper.listByExam(examId);
+        List<ExamRepoExtDTO> list = baseMapper.listByExam(examId);
+        if (!CollectionUtils.isEmpty(list)) {
+            for (ExamRepoExtDTO item : list) {
+                ExamRepoTypeConfigUtils.fillTypesAfterLoad(item);
+            }
+        }
+        return list;
     }
 
     @Override

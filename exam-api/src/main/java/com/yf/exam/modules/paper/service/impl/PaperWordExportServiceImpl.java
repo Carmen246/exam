@@ -14,6 +14,7 @@ import com.yf.exam.modules.qu.entity.QuAnswer;
 import com.yf.exam.modules.qu.enums.QuType;
 import com.yf.exam.modules.qu.service.QuAnswerService;
 import com.yf.exam.modules.qu.service.QuService;
+import com.yf.exam.modules.qu.support.ProgramContentFormatter;
 import org.apache.commons.lang3.StringUtils;
 import org.docx4j.jaxb.Context;
 import org.docx4j.openpackaging.packages.WordprocessingMLPackage;
@@ -68,6 +69,9 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
 
     @Autowired
     private QuAnswerService quAnswerService;
+
+    @Autowired(required = false)
+    private ProgramContentFormatter programContentFormatter;
 
     @Override
     public void exportWord(PaperWordExportReqDTO reqDTO, HttpServletResponse response) {
@@ -370,11 +374,11 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
         int index = startIndex;
         for (PaperQuDetailDTO qu : list) {
             String scoreText = qu.getScore() == null ? "" : "（" + qu.getScore() + "分）";
-            addParagraph(main, factory, index + ". " + clean(qu.getContent()) + scoreText, true, false, FONT_NORMAL);
+            addParagraph(main, factory, index + ". " + formatQuestionContent(qu) + scoreText, true, false, FONT_NORMAL);
 
             if (shouldShowOptions(qu)) {
                 for (PaperQuAnswerExtDTO answer : qu.getAnswerList()) {
-                    addParagraph(main, factory, "    " + clean(answer.getAbc()) + ". " + clean(answer.getContent()),
+                    addParagraph(main, factory, "    " + clean(answer.getAbc()) + ". " + cleanBlock(answer.getContent()),
                             false, false, FONT_NORMAL);
                 }
             }
@@ -407,7 +411,7 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
         addParagraph(main, factory, "答案解析", true, false, FONT_SECTION);
         int index = 1;
         for (PaperQuDetailDTO qu : quList) {
-            addParagraph(main, factory, index + ". " + clean(qu.getContent()), true, false, FONT_NORMAL);
+            addParagraph(main, factory, index + ". " + formatQuestionContent(qu), true, false, FONT_NORMAL);
 
             if (StringUtils.isNotBlank(qu.getAnalysis())) {
                 addParagraph(main, factory, "    整体解析：" + clean(qu.getAnalysis()), false, false, FONT_NORMAL);
@@ -416,7 +420,7 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
             if (!CollectionUtils.isEmpty(qu.getAnswerList())) {
                 for (PaperQuAnswerExtDTO answer : qu.getAnswerList()) {
                     if (StringUtils.isNotBlank(answer.getAnalysis())) {
-                        addParagraph(main, factory, "    " + clean(answer.getAbc()) + ". " + clean(answer.getAnalysis()),
+                        addParagraph(main, factory, "    " + clean(answer.getAbc()) + ". " + cleanBlock(answer.getAnalysis()),
                                 false, false, FONT_NORMAL);
                     }
                 }
@@ -436,7 +440,7 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
             if (shouldShowOptions(qu) && Boolean.TRUE.equals(answer.getIsRight())) {
                 rightAnswers.add(clean(answer.getAbc()));
             } else if (!shouldShowOptions(qu) && !Boolean.FALSE.equals(answer.getIsRight())) {
-                String content = clean(answer.getContent());
+                String content = cleanBlock(answer.getContent());
                 if (StringUtils.isNotBlank(content)) {
                     rightAnswers.add(content);
                 }
@@ -486,10 +490,17 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
             run.setRPr(rPr);
         }
 
-        Text textNode = factory.createText();
-        textNode.setValue(text);
-        textNode.setSpace("preserve");
-        run.getContent().add(textNode);
+        String[] lines = normalizeBreaks(text).split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            if (i > 0) {
+                run.getContent().add(factory.createBr());
+            }
+
+            Text textNode = factory.createText();
+            textNode.setValue(lines[i]);
+            textNode.setSpace("preserve");
+            run.getContent().add(textNode);
+        }
         paragraph.getContent().add(run);
         main.addObject(paragraph);
     }
@@ -520,8 +531,51 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
         if (StringUtils.isBlank(text)) {
             return "";
         }
-        return text.replace("\r", "")
-                .replace("\n", " ")
+        return cleanBlock(text);
+    }
+
+    private String cleanBlock(String text) {
+        if (StringUtils.isBlank(text)) {
+            return "";
+        }
+        return normalizeBreaks(text)
+                .replaceAll("[ \\t]+\\n", "\n")
                 .trim();
+    }
+
+    private String normalizeBreaks(String text) {
+        if (text == null) {
+            return "";
+        }
+        return text.replace("\r\n", "\n")
+                .replace("\r", "\n");
+    }
+
+    private String formatQuestionContent(PaperQuDetailDTO qu) {
+        if (qu == null) {
+            return "";
+        }
+
+        String content = cleanBlock(qu.getContent());
+        if (StringUtils.isBlank(content)) {
+            return "";
+        }
+
+        ProgramContentFormatter formatter = getProgramContentFormatter();
+        if (!QuType.isStemCodeType(qu.getQuType())
+                && !QuType.isProgram(qu.getQuType())
+                && !formatter.containsProgramSkeleton(content)) {
+            return content;
+        }
+
+        ProgramContentFormatter.StemCodeParts parts = formatter.splitStemAndCode(content);
+        return formatter.mergeStemAndCode(parts.getStem(), parts.getCode());
+    }
+
+    private ProgramContentFormatter getProgramContentFormatter() {
+        if (programContentFormatter == null) {
+            programContentFormatter = new ProgramContentFormatter();
+        }
+        return programContentFormatter;
     }
 }

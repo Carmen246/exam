@@ -79,6 +79,7 @@ CREATE TABLE `el_exam_repo` (
   `multi_score` int NOT NULL DEFAULT '0' COMMENT '多选题分数',
   `judge_count` int NOT NULL DEFAULT '0' COMMENT '判断题数量',
   `judge_score` int NOT NULL DEFAULT '0' COMMENT '判断题分数',
+  `type_config` text COLLATE utf8mb4_general_ci COMMENT '题型配置JSON',
   `saq_count` int NOT NULL DEFAULT '0' COMMENT '简答题数量',
   `saq_score` int NOT NULL DEFAULT '0' COMMENT '简答题分数',
   PRIMARY KEY (`id`) USING BTREE,

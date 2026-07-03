@@ -20,7 +20,7 @@
         >
           <el-table-column
             label="题库"
-            width="200"
+            width="240"
           >
             <template v-slot="scope">
               <repo-select
@@ -32,62 +32,66 @@
 
           </el-table-column>
           <el-table-column
-            label="单选数量"
-            align="center"
-          >
-
-            <template v-slot="scope">
-              <el-input-number v-model="scope.row.radioCount" :min="0" :max="scope.row.totalRadio" :controls="false" style="width: 100px" /> / {{ scope.row.totalRadio }}
-            </template>
-
-          </el-table-column>
-
-          <el-table-column
-            label="单选分数"
-            align="center"
+            label="题型配置"
+            min-width="760"
           >
             <template v-slot="scope">
-              <el-input-number v-model="scope.row.radioScore" :min="0" :controls="false" style="width: 100%" />
-            </template>
-          </el-table-column>
-
-          <el-table-column
-            label="多选数量"
-            align="center"
-          >
-
-            <template v-slot="scope">
-              <el-input-number v-model="scope.row.multiCount" :min="0" :max="scope.row.totalMulti" :controls="false" style="width: 100px" /> / {{ scope.row.totalMulti }}
-            </template>
-
-          </el-table-column>
-
-          <el-table-column
-            label="多选分数"
-            align="center"
-          >
-            <template v-slot="scope">
-              <el-input-number v-model="scope.row.multiScore" :min="0" :controls="false" style="width: 100%" />
-            </template>
-          </el-table-column>
-
-          <el-table-column
-            label="判断题数量"
-            align="center"
-          >
-
-            <template v-slot="scope">
-              <el-input-number v-model="scope.row.judgeCount" :min="0" :max="scope.row.totalJudge" :controls="false" style="width: 100px" />  / {{ scope.row.totalJudge }}
-            </template>
-
-          </el-table-column>
-
-          <el-table-column
-            label="判断题分数"
-            align="center"
-          >
-            <template v-slot="scope">
-              <el-input-number v-model="scope.row.judgeScore" :min="0" :controls="false" style="width: 100%" />
+              <div class="exam-type-list">
+                <div class="exam-type-row exam-type-header">
+                  <div>题型</div>
+                  <div>抽题数量</div>
+                  <div>每题分值</div>
+                  <div />
+                </div>
+                <div
+                  v-for="(item, typeIndex) in scope.row.types"
+                  :key="item.rowId"
+                  class="exam-type-row"
+                >
+                  <el-select v-model="item.quType" placeholder="题型" class="exam-type-select">
+                    <el-option
+                      v-for="type in quTypes"
+                      :key="type.value"
+                      :label="type.label"
+                      :value="type.value"
+                      :disabled="isRepoTypeDisabled(scope.row, type.value, typeIndex)"
+                    />
+                  </el-select>
+                  <div class="exam-count-cell">
+                    <el-input-number
+                      v-model="item.count"
+                      :min="0"
+                      :max="getRepoTypeTotal(scope.row, item.quType)"
+                      :controls="false"
+                      class="exam-number-input"
+                    />
+                    <span class="exam-count-total">/ {{ getRepoTypeTotal(scope.row, item.quType) }}</span>
+                  </div>
+                  <el-input-number
+                    v-model="item.score"
+                    :min="0"
+                    :max="100"
+                    :controls="false"
+                    class="exam-number-input"
+                  />
+                  <el-button
+                    :disabled="scope.row.types.length <= 1"
+                    type="danger"
+                    icon="el-icon-delete"
+                    circle
+                    size="mini"
+                    @click="removeRepoType(scope.row, typeIndex)"
+                  />
+                </div>
+                <el-button
+                  type="text"
+                  icon="el-icon-plus"
+                  :disabled="scope.row.types.length >= quTypes.length"
+                  @click="addRepoType(scope.row)"
+                >
+                  添加题型
+                </el-button>
+              </div>
             </template>
           </el-table-column>
 
@@ -204,6 +208,7 @@
 import { fetchDetail, saveData } from '@/api/exam/exam'
 import { fetchTree } from '@/api/sys/depart/depart'
 import RepoSelect from '@/components/RepoSelect'
+import { QU_TYPE_OPTIONS } from '@/filters'
 
 export default {
   name: 'ExamDetail',
@@ -218,6 +223,7 @@ export default {
       filterText: '',
       treeLoading: false,
       dateValues: [],
+      quTypes: QU_TYPE_OPTIONS,
       // 题库
       repoList: [],
       // 已选择的题库
@@ -289,16 +295,12 @@ export default {
         this.excludes = []
         for (let i = 0; i<val.length; i++) {
           const item = val[i]
-          if (item.radioCount > 0 && item.radioScore>0) {
-            totalScore += item.radioCount * item.radioScore
-          }
-
-          if (item.multiCount>0 && item.multiScore>0) {
-            totalScore += item.multiCount * item.multiScore
-          }
-
-          if (item.judgeCount>0 && item.judgeScore>0) {
-            totalScore += item.judgeCount * item.judgeScore
+          this.ensureRepoTypes(item)
+          for (let j = 0; j < item.types.length; j++) {
+            const type = item.types[j]
+            if (type.count > 0 && type.score > 0) {
+              totalScore += type.count * type.score
+            }
           }
           this.excludes.push(item.id)
         }
@@ -353,32 +355,57 @@ export default {
             return
           }
 
-          if ((repo.radioCount > 0 && repo.radioScore === 0) || (repo.radioCount === 0 && repo.radioScore > 0)) {
+          const typeConfigs = this.normalizeRepoPayload(repo)
+          if (typeConfigs.length === 0) {
             this.$notify({
               title: '提示信息',
-              message: '题库第：[' + (i + 1) + ']项存在无效的单选题配置！',
+              message: '题库第：[' + (i + 1) + ']项至少需要配置一种题型！',
               type: 'warning',
               duration: 2000
             })
-
             return
           }
 
-          if ((repo.multiCount > 0 && repo.multiScore === 0) || (repo.multiCount === 0 && repo.multiScore > 0)) {
+          const invalidType = typeConfigs.find(item => !item.quType)
+          if (invalidType) {
             this.$notify({
               title: '提示信息',
-              message: '题库第：[' + (i + 1) + ']项存在无效的多选题配置！',
+              message: '题库第：[' + (i + 1) + ']项存在未选择题型的配置！',
               type: 'warning',
               duration: 2000
             })
-
             return
           }
 
-          if ((repo.judgeCount > 0 && repo.judgeScore === 0) || (repo.judgeCount === 0 && repo.judgeScore > 0)) {
+          const invalidScore = typeConfigs.find(item => item.score <= 0)
+          if (invalidScore) {
             this.$notify({
               title: '提示信息',
-              message: '题库第：[' + (i + 1) + ']项存在无效的判断题配置！',
+              message: '题库第：[' + (i + 1) + ']项存在无效的每题分值！',
+              type: 'warning',
+              duration: 2000
+            })
+            return
+          }
+
+          const duplicateTypes = typeConfigs
+            .map(item => item.quType)
+            .filter((value, index, arr) => arr.indexOf(value) !== index)
+          if (duplicateTypes.length > 0) {
+            this.$notify({
+              title: '提示信息',
+              message: '题库第：[' + (i + 1) + ']项题型不能重复配置！',
+              type: 'warning',
+              duration: 2000
+            })
+            return
+          }
+
+          const overLimitType = typeConfigs.find(item => item.count > this.getRepoTypeTotal(repo, item.quType))
+          if (overLimitType) {
+            this.$notify({
+              title: '提示信息',
+              message: '题库第：[' + (i + 1) + ']项抽题数量超过题库总量！',
               type: 'warning',
               duration: 2000
             })
@@ -408,7 +435,7 @@ export default {
 
     // 添加子项
     handleAdd() {
-      this.repoList.push({ id: '', rowId: new Date().getTime(), radioCount: 0, radioScore: 0, multiCount: 0, multiScore: 0, judgeCount: 0, judgeScore: 0, saqCount: 0, saqScore: 0 })
+      this.repoList.push(this.newRepoConfig())
     },
 
     removeItem(index) {
@@ -423,13 +450,19 @@ export default {
           this.dateValues[0] = this.postForm.startTime
           this.dateValues[1] = this.postForm.endTime
         }
-        this.repoList = this.postForm.repoList
+        this.repoList = (this.postForm.repoList || []).map(item => this.normalizeRepoConfig(item))
       })
     },
 
     submitForm() {
       // 校验和处理数据
-      this.postForm.repoList = this.repoList
+      this.postForm.repoList = this.repoList.map(item => {
+        const row = { ...item }
+        const typeConfigs = this.normalizeRepoPayload(row)
+        this.syncLegacyTypeFields(row, typeConfigs)
+        row.types = typeConfigs
+        return row
+      })
 
       saveData(this.postForm).then(() => {
         this.$notify({
@@ -448,22 +481,237 @@ export default {
       return data.deptName.indexOf(value) !== -1
     },
 
+    newRepoConfig() {
+      return {
+        id: '',
+        rowId: new Date().getTime() + '-' + Math.random(),
+        repoId: '',
+        radioCount: 0,
+        radioScore: 0,
+        multiCount: 0,
+        multiScore: 0,
+        judgeCount: 0,
+        judgeScore: 0,
+        typeTotals: '{}',
+        typeTotalsMap: {},
+        types: this.defaultRepoTypes()
+      }
+    },
+
+    normalizeRepoConfig(repo) {
+      const row = {
+        ...this.newRepoConfig(),
+        ...repo,
+        rowId: repo.rowId || repo.id || (new Date().getTime() + '-' + Math.random())
+      }
+      row.typeTotalsMap = this.parseTypeTotals(row.typeTotals)
+      this.ensureRepoTypes(row)
+      return row
+    },
+
+    defaultRepoTypes() {
+      return [
+        this.newRepoType(1, 0, 1),
+        this.newRepoType(2, 0, 1),
+        this.newRepoType(3, 0, 1)
+      ]
+    },
+
+    newRepoType(quType, count, score) {
+      return {
+        rowId: new Date().getTime() + '-' + Math.random(),
+        quType: quType,
+        count: count,
+        score: score
+      }
+    },
+
+    ensureRepoTypes(repo) {
+      if (repo.types && repo.types.length > 0) {
+        repo.types.forEach(item => {
+          if (!item.rowId) {
+            this.$set(item, 'rowId', new Date().getTime() + '-' + Math.random())
+          }
+        })
+        return
+      }
+
+      const legacyTypes = []
+      if (repo.radioCount > 0 || repo.radioScore > 0) {
+        legacyTypes.push(this.newRepoType(1, Number(repo.radioCount || 0), Number(repo.radioScore || 0)))
+      }
+      if (repo.multiCount > 0 || repo.multiScore > 0) {
+        legacyTypes.push(this.newRepoType(2, Number(repo.multiCount || 0), Number(repo.multiScore || 0)))
+      }
+      if (repo.judgeCount > 0 || repo.judgeScore > 0) {
+        legacyTypes.push(this.newRepoType(3, Number(repo.judgeCount || 0), Number(repo.judgeScore || 0)))
+      }
+
+      this.$set(repo, 'types', legacyTypes.length > 0 ? legacyTypes : this.defaultRepoTypes())
+    },
+
+    addRepoType(row) {
+      this.ensureRepoTypes(row)
+      const usedTypes = row.types.map(item => item.quType)
+      const nextType = this.quTypes.find(item => usedTypes.indexOf(item.value) === -1)
+      if (!nextType) {
+        this.$message.warning('全部题型都已经添加！')
+        return
+      }
+      row.types.push(this.newRepoType(nextType.value, 0, 1))
+    },
+
+    removeRepoType(row, index) {
+      this.ensureRepoTypes(row)
+      if (row.types.length <= 1) {
+        return
+      }
+      row.types.splice(index, 1)
+    },
+
+    isRepoTypeDisabled(row, value, currentIndex) {
+      this.ensureRepoTypes(row)
+      return row.types.some((item, index) => index !== currentIndex && item.quType === value)
+    },
+
+    parseTypeTotals(value) {
+      if (!value) {
+        return {}
+      }
+      if (typeof value === 'object') {
+        return value
+      }
+      try {
+        return JSON.parse(value)
+      } catch (e) {
+        return {}
+      }
+    },
+
+    getRepoTypeTotal(row, quType) {
+      if (!row || !quType) {
+        return 0
+      }
+      if (!row.typeTotalsMap) {
+        this.$set(row, 'typeTotalsMap', this.parseTypeTotals(row.typeTotals))
+      }
+      const totals = row.typeTotalsMap || {}
+      if (totals[quType] !== undefined) {
+        return Number(totals[quType] || 0)
+      }
+      if (quType === 1) {
+        return Number(row.totalRadio || 0)
+      }
+      if (quType === 2) {
+        return Number(row.totalMulti || 0)
+      }
+      if (quType === 3) {
+        return Number(row.totalJudge || 0)
+      }
+      return 0
+    },
+
+    normalizeRepoPayload(repo) {
+      this.ensureRepoTypes(repo)
+      return repo.types
+        .filter(item => Number(item.count || 0) > 0)
+        .map(item => ({
+          quType: item.quType,
+          count: Number(item.count || 0),
+          score: Number(item.score || 0)
+        }))
+    },
+
+    syncLegacyTypeFields(repo, typeConfigs) {
+      repo.radioCount = 0
+      repo.radioScore = 0
+      repo.multiCount = 0
+      repo.multiScore = 0
+      repo.judgeCount = 0
+      repo.judgeScore = 0
+
+      typeConfigs.forEach(item => {
+        if (item.quType === 1) {
+          repo.radioCount = item.count
+          repo.radioScore = item.score
+        }
+        if (item.quType === 2) {
+          repo.multiCount = item.count
+          repo.multiScore = item.score
+        }
+        if (item.quType === 3) {
+          repo.judgeCount = item.count
+          repo.judgeScore = item.score
+        }
+      })
+    },
+
     repoChange(e, row) {
       // 赋值ID
-      row.id = e.id
+      row.id = e ? e.id : ''
 
       if (e != null) {
         row.totalRadio = e.radioCount
         row.totalMulti = e.multiCount
         row.totalJudge = e.judgeCount
+        row.typeTotals = e.typeTotals || '{}'
+        this.$set(row, 'typeTotalsMap', this.parseTypeTotals(row.typeTotals))
+        this.$set(row, 'types', this.defaultRepoTypes())
       } else {
         row.totalRadio = 0
         row.totalMulti = 0
         row.totalJudge = 0
+        row.typeTotals = '{}'
+        this.$set(row, 'typeTotalsMap', {})
+        this.$set(row, 'types', this.defaultRepoTypes())
       }
     }
 
   }
 }
 </script>
+
+<style scoped>
+.exam-type-list {
+  min-width: 680px;
+}
+
+.exam-type-row {
+  display: grid;
+  grid-template-columns: 220px 220px 180px 48px;
+  column-gap: 12px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.exam-type-row:last-child {
+  margin-bottom: 0;
+}
+
+.exam-type-header {
+  margin-bottom: 8px;
+  color: #909399;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.exam-type-select {
+  width: 100%;
+}
+
+.exam-count-cell {
+  display: flex;
+  align-items: center;
+}
+
+.exam-number-input {
+  width: 140px;
+}
+
+.exam-count-total {
+  margin-left: 8px;
+  color: #606266;
+  white-space: nowrap;
+}
+</style>
 

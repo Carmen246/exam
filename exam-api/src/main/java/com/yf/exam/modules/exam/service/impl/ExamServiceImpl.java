@@ -19,6 +19,7 @@ import com.yf.exam.modules.exam.mapper.ExamMapper;
 import com.yf.exam.modules.exam.service.ExamDepartService;
 import com.yf.exam.modules.exam.service.ExamRepoService;
 import com.yf.exam.modules.exam.service.ExamService;
+import com.yf.exam.modules.exam.support.ExamRepoTypeConfigUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
@@ -165,24 +166,15 @@ public class ExamServiceImpl extends ServiceImpl<ExamMapper, Exam> implements Ex
         // 题库组卷
         List<ExamRepoExtDTO> repoList = reqDTO.getRepoList();
 
-        for(ExamRepoDTO item: repoList){
-            if(item.getRadioCount()!=null
-                    && item.getRadioCount()>0
-                    && item.getRadioScore()!=null
-                    && item.getRadioScore()>0){
-                objScore+=item.getRadioCount()*item.getRadioScore();
-            }
-            if(item.getMultiCount()!=null
-                    && item.getMultiCount()>0
-                    && item.getMultiScore()!=null
-                    && item.getMultiScore()>0){
-                objScore+=item.getMultiCount()*item.getMultiScore();
-            }
-            if(item.getJudgeCount()!=null
-                    && item.getJudgeCount()>0
-                    && item.getJudgeScore()!=null
-                    && item.getJudgeScore()>0){
-                objScore+=item.getJudgeCount()*item.getJudgeScore();
+        if (repoList != null) {
+            for (ExamRepoDTO item : repoList) {
+                List<ExamRepoDTO.QuestionTypeConfig> configs = ExamRepoTypeConfigUtils.normalize(item);
+                for (ExamRepoDTO.QuestionTypeConfig config : configs) {
+                    if (config.getCount() != null && config.getCount() > 0
+                            && config.getScore() != null && config.getScore() > 0) {
+                        objScore += config.getCount() * config.getScore();
+                    }
+                }
             }
         }
 

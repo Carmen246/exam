@@ -5,6 +5,7 @@ import io.swagger.annotations.ApiModelProperty;
 import lombok.Data;
 
 import java.io.Serializable;
+import java.util.List;
 
 /**
 * <p>
@@ -47,5 +48,26 @@ public class ExamRepoDTO implements Serializable {
     
     @ApiModelProperty(value = "判断题分数", required=true)
     private Integer judgeScore;
+
+    @ApiModelProperty(value = "题型配置JSON")
+    private String typeConfig;
+
+    @ApiModelProperty(value = "题型配置")
+    private List<QuestionTypeConfig> types;
+
+    @Data
+    public static class QuestionTypeConfig implements Serializable {
+
+        private static final long serialVersionUID = 1L;
+
+        @ApiModelProperty(value = "题型")
+        private Integer quType;
+
+        @ApiModelProperty(value = "抽题数量")
+        private Integer count;
+
+        @ApiModelProperty(value = "每题分值")
+        private Integer score;
+    }
     
 }

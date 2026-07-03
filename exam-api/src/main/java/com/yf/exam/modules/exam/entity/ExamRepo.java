@@ -74,5 +74,11 @@ public class ExamRepo extends Model<ExamRepo> {
     */
     @TableField("judge_score")
     private Integer judgeScore;
+
+    /**
+    * 棰樺瀷閰嶇疆JSON
+    */
+    @TableField("type_config")
+    private String typeConfig;
     
 }

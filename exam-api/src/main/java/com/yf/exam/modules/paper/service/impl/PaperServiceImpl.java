@@ -17,6 +17,7 @@ import com.yf.exam.modules.exam.dto.ExamRepoDTO;
 import com.yf.exam.modules.exam.dto.ext.ExamRepoExtDTO;
 import com.yf.exam.modules.exam.service.ExamRepoService;
 import com.yf.exam.modules.exam.service.ExamService;
+import com.yf.exam.modules.exam.support.ExamRepoTypeConfigUtils;
 import com.yf.exam.modules.paper.dto.PaperDTO;
 import com.yf.exam.modules.paper.dto.PaperQuDTO;
 import com.yf.exam.modules.paper.dto.ext.PaperQuAnswerExtDTO;
@@ -248,9 +249,11 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
             for (ExamRepoExtDTO item : list) {
 
                 // 单选题
-                if(item.getRadioCount() > 0){
-                    List<Qu> radioList = quService.listByRandom(item.getRepoId(), QuType.RADIO, excludes, item.getRadioCount());
-                    for (Qu qu : radioList) {
+                List<ExamRepoDTO.QuestionTypeConfig> configs = ExamRepoTypeConfigUtils.normalize(item);
+                for (ExamRepoDTO.QuestionTypeConfig config : configs) {
+                    List<Qu> questionList = quService.listByRandom(item.getRepoId(), config.getQuType(), excludes,
+                            config.getCount());
+                    for (Qu qu : questionList) {
                         PaperQu paperQu = this.processPaperQu(item, qu);
                         quList.add(paperQu);
                         excludes.add(qu.getId());
@@ -258,26 +261,10 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
                 }
 
                 //多选题
-                if(item.getMultiCount() > 0) {
-                    List<Qu> multiList = quService.listByRandom(item.getRepoId(), QuType.MULTI, excludes,
-                            item.getMultiCount());
-                    for (Qu qu : multiList) {
-                        PaperQu paperQu = this.processPaperQu(item, qu);
-                        quList.add(paperQu);
-                        excludes.add(qu.getId());
-                    }
-                }
+                
 
                 // 判断题
-                if(item.getJudgeCount() > 0) {
-                    List<Qu> judgeList = quService.listByRandom(item.getRepoId(), QuType.JUDGE, excludes,
-                            item.getJudgeCount());
-                    for (Qu qu : judgeList) {
-                        PaperQu paperQu = this.processPaperQu(item, qu);
-                        quList.add(paperQu);
-                        excludes.add(qu.getId());
-                    }
-                }
+                
             }
         }
         return quList;
@@ -300,24 +287,13 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
         paperQu.setIsRight(false);
         paperQu.setQuType(qu.getQuType());
 
-        if (QuType.RADIO.equals(qu.getQuType())) {
-            paperQu.setScore(repo.getRadioScore());
-            paperQu.setActualScore(repo.getRadioScore());
-        }
-
-        if (QuType.MULTI.equals(qu.getQuType())) {
-            paperQu.setScore(repo.getMultiScore());
-            paperQu.setActualScore(repo.getMultiScore());
-        }
-
-        if (QuType.JUDGE.equals(qu.getQuType())) {
-            paperQu.setScore(repo.getJudgeScore());
-            paperQu.setActualScore(repo.getJudgeScore());
-        }
+        int score = ExamRepoTypeConfigUtils.scoreForType(repo, qu.getQuType());
+        paperQu.setScore(score);
 
         if (QuType.isSubjective(qu.getQuType())) {
-            paperQu.setScore(5);
             paperQu.setActualScore(0);
+        } else {
+            paperQu.setActualScore(score);
         }
 
         return paperQu;

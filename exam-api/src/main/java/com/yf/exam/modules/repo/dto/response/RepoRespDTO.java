@@ -28,4 +28,7 @@ public class RepoRespDTO extends RepoDTO {
     @ApiModelProperty(value = "判断题数量", required=true)
     private Integer judgeCount;
 
+    @ApiModelProperty(value = "各题型总量JSON")
+    private String typeTotals;
+
 }

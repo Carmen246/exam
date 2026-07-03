@@ -13,24 +13,35 @@
         <result column="multi_score" property="multiScore" />
         <result column="judge_count" property="judgeCount" />
         <result column="judge_score" property="judgeScore" />
+        <result column="type_config" property="typeConfig" />
     </resultMap>
 
     <!-- 通用查询结果列 -->
     <sql id="Base_Column_List">
-        `id`,`exam_id`,`repo_id`,`radio_count`,`radio_score`,`multi_count`,`multi_score`,`judge_count`,`judge_score`
+        `id`,`exam_id`,`repo_id`,`radio_count`,`radio_score`,`multi_count`,`multi_score`,`judge_count`,`judge_score`,`type_config`
     </sql>
 
     <resultMap id="ExtResultMap" type="com.yf.exam.modules.exam.dto.ext.ExamRepoExtDTO" extends="BaseResultMap">
         <result column="totalRadio" property="totalRadio" />
         <result column="totalMulti" property="totalMulti" />
         <result column="totalJudge" property="totalJudge" />
+        <result column="type_totals" property="typeTotals" />
     </resultMap>
 
     <select id="listByExam" resultMap="ExtResultMap">
         SELECT ep.*,
                (SELECT COUNT(0) FROM el_qu_repo WHERE repo_id=ep.repo_id AND qu_type=1) AS totalRadio,
                (SELECT COUNT(0) FROM el_qu_repo WHERE repo_id=ep.repo_id AND qu_type=2) AS totalMulti,
-               (SELECT COUNT(0) FROM el_qu_repo WHERE repo_id=ep.repo_id AND qu_type=3) AS totalJudge
+               (SELECT COUNT(0) FROM el_qu_repo WHERE repo_id=ep.repo_id AND qu_type=3) AS totalJudge,
+               COALESCE((
+                   SELECT CONCAT('{', GROUP_CONCAT(CONCAT('"', type_counts.qu_type, '":', type_counts.type_count) ORDER BY type_counts.qu_type SEPARATOR ','), '}')
+                   FROM (
+                       SELECT repo_id, qu_type, COUNT(0) AS type_count
+                       FROM el_qu_repo
+                       GROUP BY repo_id, qu_type
+                   ) type_counts
+                   WHERE type_counts.repo_id=ep.repo_id
+               ), '{}') AS type_totals
         FROM el_exam_repo ep
         WHERE ep.exam_id=#{examId}
     </select>
