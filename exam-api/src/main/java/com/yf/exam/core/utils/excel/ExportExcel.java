@@ -393,7 +393,9 @@ public class ExportExcel {
 		response.setHeader("Access-Control-Allow-Origin", "*");
         response.setContentType("application/octet-stream; charset=utf-8");
         response.addHeader("Content-Disposition", "attachment; filename="+ URLEncoder.encode(fileName, "utf-8"));
-		write(response.getOutputStream());
+		OutputStream outputStream = response.getOutputStream();
+		write(outputStream);
+		outputStream.flush();
 		return this;
 	}
 
