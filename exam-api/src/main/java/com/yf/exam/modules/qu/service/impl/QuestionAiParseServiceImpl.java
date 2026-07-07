@@ -54,6 +54,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     private static final int FALLBACK_PARSE_BATCH_LENGTH = 1000;
     private static final int NORMALIZE_BATCH_QUESTION_COUNT = 20;
     private static final int PARSE_BATCH_QUESTION_COUNT = 2;
+    private static final int OBJECTIVE_PARSE_BATCH_QUESTION_COUNT = 4;
     private static final int FALLBACK_PARSE_BATCH_QUESTION_COUNT = 1;
     private static final int AI_RETRY_TIMES = 5;
     private static final int AI_RETRY_TIMES_NON_TRANSIENT = 2;
@@ -742,13 +743,6 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             }
             return filterIgnorableChunks(splitByLength(text, maxLength));
         }
-        if (blocks.size() <= 1) {
-            if (QuestionBoundaryHelper.isIgnorableImportFragment(blocks.get(0))) {
-                return new ArrayList<>();
-            }
-            return filterIgnorableChunks(splitByLength(text, maxLength));
-        }
-
         // Extract section headers with their positions from the original text,
         // so we can propagate them into each new chunk for AI context.
         String normalized = text.replace("\r\n", "\n").replace("\r", "\n");
@@ -797,13 +791,18 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                 }
             }
 
+            Integer currentSectionType = QuestionBoundaryHelper.inferQuTypeFromSection(currentSectionHeader);
+            boolean highRiskBlock = isHighRiskQuestionBlock(value, currentSectionType);
+            int batchQuestionLimit = questionBatchLimit(currentSectionType, highRiskBlock, maxQuestionCount);
+
             // Flush when section boundary changes to avoid mixing question types
             boolean sectionChanged = current.length() > 0 && questionCount > 0
                     && !currentSectionHeader.equals(chunkSectionHeader);
             boolean shouldFlush = current.length() > 0
                     && (sectionChanged
                         || current.length() + value.length() + 2 > maxLength
-                        || questionCount >= maxQuestionCount);
+                        || questionCount >= batchQuestionLimit
+                        || highRiskBlock);
             if (shouldFlush) {
                 chunks.add(current.toString().trim());
                 current.setLength(0);
@@ -817,11 +816,17 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
 
             if (value.length() > maxLength) {
                 if (current.length() > 0) {
-                    chunks.add(current.toString().trim());
+                    if (questionCount > 0) {
+                        chunks.add(current.toString().trim());
+                    }
                     current.setLength(0);
                     questionCount = 0;
                 }
-                chunks.addAll(splitByLength(value, maxLength));
+                if (highRiskBlock) {
+                    chunks.add(wrapBlockWithSection(value, currentSectionHeader));
+                } else {
+                    chunks.addAll(splitByLength(wrapBlockWithSection(value, currentSectionHeader), maxLength));
+                }
                 continue;
             }
 
@@ -840,6 +845,47 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
             chunks.add(current.toString().trim());
         }
         return filterIgnorableChunks(chunks);
+    }
+
+    private boolean isHighRiskQuestionBlock(String block, Integer sectionType) {
+        if (StringUtils.isBlank(block)) {
+            return false;
+        }
+        if (QuType.FILL_PROGRAM.equals(sectionType)
+                || QuType.READ_PROGRAM.equals(sectionType)
+                || QuType.PROGRAM.equals(sectionType)
+                || QuType.FIX_PROGRAM.equals(sectionType)) {
+            return true;
+        }
+        return containsCodeBlock(block)
+                || block.contains("{FILL:")
+                || block.contains(FillProgramBlankProcessor.BLANK)
+                || QuestionBoundaryHelper.isExplicitFixProgramCue(block)
+                || block.matches("(?s).*(阅读程序|程序运行后|输出结果|编写程序|程序设计|下面程序|以下程序|下面函数|以下函数).*");
+    }
+
+    private int questionBatchLimit(Integer sectionType, boolean highRiskBlock, int configuredLimit) {
+        if (configuredLimit <= 1 || highRiskBlock) {
+            return 1;
+        }
+        if (QuType.RADIO.equals(sectionType)
+                || QuType.MULTI.equals(sectionType)
+                || QuType.JUDGE.equals(sectionType)) {
+            return Math.max(configuredLimit, OBJECTIVE_PARSE_BATCH_QUESTION_COUNT);
+        }
+        return configuredLimit;
+    }
+
+    private String wrapBlockWithSection(String block, String sectionHeader) {
+        String value = StringUtils.defaultString(block).trim();
+        if (StringUtils.isBlank(sectionHeader)) {
+            return value;
+        }
+        String header = sectionHeader.trim();
+        if (StringUtils.startsWith(value, header)) {
+            return value;
+        }
+        return header + "\n\n" + value;
     }
 
     private void collectSectionMarkers(String text, List<String> headers, List<Integer> positions) {

@@ -154,10 +154,15 @@ class QuestionAiParseServiceImplFilterTest {
         List<String> batches = service.splitParseBatches(text);
 
         long programBatchCount = batches.stream()
-                .filter(batch -> batch.contains("程序设计题") && batch.contains("用 for 语句求")
-                        && batch.contains("float fx") && !batch.contains("以下程序的输出结果"))
+                .filter(batch -> batch.contains("程序设计题") && !batch.contains("以下程序的输出结果"))
                 .count();
-        assertEquals(1, programBatchCount);
+        assertEquals(3, programBatchCount);
+        assertTrue(batches.stream().anyMatch(batch -> batch.contains("程序设计题")
+                && batch.contains("用 for 语句求") && !batch.contains("float fx")));
+        assertTrue(batches.stream().anyMatch(batch -> batch.contains("程序设计题")
+                && batch.contains("float fx") && !batch.contains("文件 f1.txt")));
+        assertTrue(batches.stream().anyMatch(batch -> batch.contains("程序设计题")
+                && batch.contains("文件 f1.txt") && !batch.contains("float fx")));
     }
 
     @Test
@@ -184,6 +189,43 @@ class QuestionAiParseServiceImplFilterTest {
         assertEquals(QuType.PROGRAM, respDTO.getQuestions().get(0).getQuType());
         assertEquals(QuType.PROGRAM, respDTO.getQuestions().get(1).getQuType());
         assertEquals(QuType.PROGRAM, respDTO.getQuestions().get(2).getQuType());
+    }
+
+    @Test
+    void splitsProgramQuestionsOnePerBatchWithSectionContext() throws Exception {
+        QuestionAiParseServiceImpl service = new QuestionAiParseServiceImpl();
+        inject(service, "programContentFormatter", new ProgramContentFormatter());
+
+        String text = "五、程序设计题（本大题共2小题，每小题10分，共20分）\n"
+                + "1. 编写程序，输出 1 到 10 的和。\n"
+                + "2. 编写程序，从键盘输入两个整数，输出较大值。";
+
+        List<String> chunks = splitQuestionText(service, text, 1800, 2);
+
+        assertEquals(2, chunks.size());
+        assertTrue(chunks.get(0).contains("程序设计题"));
+        assertTrue(chunks.get(0).contains("1. 编写程序"));
+        assertFalse(chunks.get(0).contains("2. 编写程序"));
+        assertTrue(chunks.get(1).contains("程序设计题"));
+        assertTrue(chunks.get(1).contains("2. 编写程序"));
+    }
+
+    @Test
+    void keepsObjectiveQuestionsInLargerBatches() throws Exception {
+        QuestionAiParseServiceImpl service = new QuestionAiParseServiceImpl();
+        inject(service, "programContentFormatter", new ProgramContentFormatter());
+
+        String text = "二、单选题（本大题共4小题，每小题1分，共4分）\n"
+                + "1. Java 属于哪类语言？\nA. 编程语言\nB. 数据库\nC. 操作系统\nD. 浏览器\n答案：A\n"
+                + "2. SQL 主要用于？\nA. 数据库\nB. 绘图\nC. 剪辑\nD. 压缩\n答案：A\n"
+                + "3. HTTP 404 表示？\nA. 成功\nB. 未找到\nC. 重定向\nD. 禁止\n答案：B\n"
+                + "4. JVM 主要运行？\nA. 字节码\nB. 图片\nC. 音频\nD. SQL\n答案：A";
+
+        List<String> chunks = splitQuestionText(service, text, 5000, 2);
+
+        assertEquals(1, chunks.size());
+        assertTrue(chunks.get(0).contains("1. Java"));
+        assertTrue(chunks.get(0).contains("4. JVM"));
     }
 
     @Test
@@ -325,6 +367,15 @@ class QuestionAiParseServiceImplFilterTest {
                 QuestionParseRespDTO.class, QuestionParseReqDTO.class);
         method.setAccessible(true);
         method.invoke(service, respDTO, reqDTO);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> splitQuestionText(QuestionAiParseServiceImpl service, String text, int maxLength,
+            int maxQuestionCount) throws Exception {
+        Method method = QuestionAiParseServiceImpl.class.getDeclaredMethod("splitQuestionText",
+                String.class, int.class, int.class);
+        method.setAccessible(true);
+        return (List<String>) method.invoke(service, text, maxLength, maxQuestionCount);
     }
 
     private void inject(Object target, String fieldName, Object value) throws Exception {
