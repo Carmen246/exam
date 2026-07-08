@@ -327,11 +327,6 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
             addBlankLine(main, factory);
             addAnswerSection(main, factory, quList);
         }
-
-        if (includeAnalysis) {
-            addBlankLine(main, factory);
-            addAnalysisSection(main, factory, quList);
-        }
     }
 
     private List<PaperQuDetailDTO> filterByType(List<PaperQuDetailDTO> quList, Integer quType) {
@@ -373,8 +368,7 @@ public class PaperWordExportServiceImpl implements PaperWordExportService {
 
         int index = startIndex;
         for (PaperQuDetailDTO qu : list) {
-            String scoreText = qu.getScore() == null ? "" : "（" + qu.getScore() + "分）";
-            addParagraph(main, factory, index + ". " + formatQuestionContent(qu) + scoreText, true, false, FONT_NORMAL);
+            addParagraph(main, factory, index + ". " + formatQuestionContent(qu), true, false, FONT_NORMAL);
 
             if (shouldShowOptions(qu)) {
                 for (PaperQuAnswerExtDTO answer : qu.getAnswerList()) {
