@@ -1,8 +1,11 @@
 package com.yf.exam.modules.qu.service.impl;
 
 import com.yf.exam.core.exception.ServiceException;
+import com.yf.exam.modules.qu.support.DocToDocxConverter;
 import com.yf.exam.modules.qu.support.DocxBlankAwareTextExtractor;
 import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
+import com.yf.exam.modules.qu.support.PdfTextExtractor;
+import com.yf.exam.modules.qu.support.QuestionTextLocalNormalizer;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -47,16 +50,21 @@ class QuestionDocumentParseServiceImplTest {
     }
 
     @Test
-    void rejectsLegacyDocFiles() throws Exception {
+    void rejectsInvalidLegacyDocFiles() throws Exception {
         QuestionDocumentParseServiceImpl service = new QuestionDocumentParseServiceImpl();
+        inject(service, "docToDocxConverter", new DocToDocxConverter());
+        inject(service, "docxBlankAwareTextExtractor", new DocxBlankAwareTextExtractor());
+        inject(service, "pdfTextExtractor", new PdfTextExtractor());
+        inject(service, "localNormalizer", new QuestionTextLocalNormalizer());
+        inject(service, "fillProgramBlankProcessor", new FillProgramBlankProcessor());
+
         File file = File.createTempFile("legacy-word-", ".doc");
         Files.write(file.toPath(), "legacy doc".getBytes(StandardCharsets.UTF_8));
 
         ServiceException ex = assertThrows(ServiceException.class, () -> service.extractRawText(file));
 
-        assertTrue(ex.getMessage().contains("暂不支持旧版 Word .doc 文件"));
-        assertTrue(ex.getMessage().contains(".docx"));
-        assertFalse(ex.getMessage().contains("试题文档解析失败"));
+        assertTrue(ex.getMessage().contains("旧版 Word .doc 文件转换失败"));
+        assertFalse(ex.getMessage().contains("暂不支持旧版 Word .doc 文件"));
     }
     private byte[] minimalDocxWithOfficeMath() throws Exception {
         ByteArrayOutputStream out = new ByteArrayOutputStream();

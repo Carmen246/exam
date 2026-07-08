@@ -20,6 +20,7 @@ import com.yf.exam.modules.qu.service.QuestionDocumentParseService;
 import com.yf.exam.modules.qu.service.QuestionImportTaskService;
 import com.yf.exam.modules.qu.service.RagflowKnowledgeService;
 import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
+import com.yf.exam.modules.qu.support.DocToDocxConverter;
 import com.yf.exam.modules.qu.support.QuestionAnswerDocumentMerger;
 import com.yf.exam.modules.qu.support.AiCallErrorSupport;
 import com.yf.exam.modules.qu.support.QuestionBoundaryHelper;
@@ -80,6 +81,9 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
     private QuestionExcelImportParser questionExcelImportParser;
 
     @Autowired
+    private DocToDocxConverter docToDocxConverter;
+
+    @Autowired
     @Qualifier("asyncExecutor")
     private ThreadPoolTaskExecutor asyncExecutor;
 
@@ -108,7 +112,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
         task.setMessage(QuestionImportTaskStatus.PENDING.getLabel());
 
         if (hasFile) {
-            task.setFileName(file.getOriginalFilename());
+            task.setFileName(normalizeUploadedFileName(file.getOriginalFilename()));
             task.setTempFile(saveTempFile(file, taskId));
         } else {
             task.setInputText(text.trim());
@@ -116,7 +120,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
 
         boolean hasAnswerFile = answerFile != null && !answerFile.isEmpty();
         if (hasAnswerFile) {
-            task.setAnswerFileName(answerFile.getOriginalFilename());
+            task.setAnswerFileName(normalizeUploadedFileName(answerFile.getOriginalFilename()));
             task.setAnswerTempFile(saveTempFile(answerFile, taskId, "-answer"));
         }
 
@@ -593,12 +597,34 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
             File dir = resolveAiImportDir();
             File dest = new File(dir, taskId + nameSuffix + "." + ext);
             file.transferTo(dest);
+            if ("doc".equalsIgnoreCase(ext)) {
+                try {
+                    File docxFile = docToDocxConverter.convertToDocxFile(dest);
+                    if (!dest.delete()) {
+                        log.warn("删除临时 .doc 文件失败：{}", dest.getAbsolutePath());
+                    }
+                    return docxFile;
+                } catch (Exception e) {
+                    deleteTempFile(dest);
+                    throw new ServiceException("旧版 Word .doc 文件转换失败：" + e.getMessage());
+                }
+            }
             return dest;
         } catch (ServiceException e) {
             throw e;
         } catch (Exception e) {
             throw new ServiceException("保存上传文件失败：" + e.getMessage());
         }
+    }
+
+    private String normalizeUploadedFileName(String fileName) {
+        if (StringUtils.isBlank(fileName)) {
+            return fileName;
+        }
+        if ("doc".equalsIgnoreCase(FilenameUtils.getExtension(fileName))) {
+            return FilenameUtils.removeExtension(fileName) + ".docx";
+        }
+        return fileName;
     }
 
     private File resolveAiImportDir() {

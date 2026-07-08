@@ -119,9 +119,9 @@
                 :disabled="taskRunning"
                 :on-change="handleFileChange"
                 action=""
-                accept=".xls,.xlsx,.docx,.pdf,.txt"
+                accept=".xls,.xlsx,.doc,.docx,.pdf,.txt"
               >
-                <el-button :loading="fileLoading" :disabled="taskRunning" icon="el-icon-upload2" type="primary" plain>选择试卷文档(Excel/docx/pdf)</el-button>
+                <el-button :loading="fileLoading" :disabled="taskRunning" icon="el-icon-upload2" type="primary" plain>选择试卷文档(Excel/doc/docx/pdf)</el-button>
               </el-upload>
               <el-upload
                 :auto-upload="false"
@@ -129,7 +129,7 @@
                 :disabled="taskRunning"
                 :on-change="handleAnswerFileChange"
                 action=""
-                accept=".docx,.pdf,.txt"
+                accept=".doc,.docx,.pdf,.txt"
                 class="answer-upload"
               >
                 <el-button :disabled="taskRunning" icon="el-icon-document" plain>选择答案文档（可选）</el-button>
@@ -475,6 +475,9 @@ export default {
         return 'Excel 文件已就绪，将直接解析结构化数据，确认后点击「开始AI导入」。'
       }
       const parts = ['试卷文档已就绪']
+      if (this.isLegacyDocFile(this.fileInfo.fileName)) {
+        parts.push('doc 文件将在上传后自动转换为 docx')
+      }
       if (this.pendingAnswerFile) {
         parts.push('答案文档已就绪')
       } else {
@@ -537,6 +540,10 @@ export default {
       const lowerName = (fileName || '').toLowerCase()
       return lowerName.endsWith('.xls') || lowerName.endsWith('.xlsx')
     },
+    isLegacyDocFile(fileName) {
+      const lowerName = (fileName || '').toLowerCase()
+      return lowerName.endsWith('.doc') && !lowerName.endsWith('.docx')
+    },
     handleFileChange(file) {
       const rawFile = file.raw
       if (!rawFile) {
@@ -545,9 +552,9 @@ export default {
 
       const fileName = rawFile.name || ''
       const lowerName = fileName.toLowerCase()
-      if (!lowerName.endsWith('.docx') && !lowerName.endsWith('.txt') && !lowerName.endsWith('.pdf') &&
+      if (!lowerName.endsWith('.doc') && !lowerName.endsWith('.docx') && !lowerName.endsWith('.txt') && !lowerName.endsWith('.pdf') &&
           !lowerName.endsWith('.xls') && !lowerName.endsWith('.xlsx')) {
-        this.$message.warning('只支持 Excel、docx、pdf、txt 文件')
+        this.$message.warning('只支持 Excel、doc、docx、pdf、txt 文件')
         return
       }
 
@@ -559,12 +566,14 @@ export default {
       this.rawSourceText = ''
       this.resetTaskState(false)
 
-      const isExcel = lowerName.endsWith('.xls') || lowerName.endsWith('.xlsx')
+      const isExcel = this.isExcelFile(fileName)
+      const isLegacyDoc = this.isLegacyDocFile(fileName)
+      const convertTip = isLegacyDoc ? '，上传后将自动转换为 docx 格式' : ''
       const tip = isExcel
         ? '已选择 Excel：' + fileName + '，将直接解析结构化数据，可点击「开始AI导入」'
         : (this.pendingAnswerFile
-          ? '已选择试卷：' + fileName + '，可点击「开始AI导入」'
-          : '已选择试卷：' + fileName + '，可选上传答案文档后点击「开始AI导入」')
+          ? '已选择试卷：' + fileName + convertTip + '，可点击「开始AI导入」'
+          : '已选择试卷：' + fileName + convertTip + '，可选上传答案文档后点击「开始AI导入」')
       this.$message.success(tip)
     },
 
@@ -576,14 +585,15 @@ export default {
 
       const fileName = rawFile.name || ''
       const lowerName = fileName.toLowerCase()
-      if (!lowerName.endsWith('.docx') && !lowerName.endsWith('.txt') && !lowerName.endsWith('.pdf')) {
-        this.$message.warning('答案文档只支持 docx、txt 和 pdf 文件')
+      if (!lowerName.endsWith('.doc') && !lowerName.endsWith('.docx') && !lowerName.endsWith('.txt') && !lowerName.endsWith('.pdf')) {
+        this.$message.warning('答案文档只支持 doc、docx、txt 和 pdf 文件')
         return
       }
 
       this.pendingAnswerFile = rawFile
       this.answerFileInfo = { fileName: fileName }
-      this.$message.success('已选择答案文档：' + fileName + '，确认后点击「开始AI导入」')
+      const convertTip = this.isLegacyDocFile(fileName) ? '，上传后将自动转换为 docx 格式' : ''
+      this.$message.success('已选择答案文档：' + fileName + convertTip + '，确认后点击「开始AI导入」')
     },
 
     handleStartImport() {

@@ -2,6 +2,7 @@ package com.yf.exam.modules.qu.service.impl;
 
 import com.yf.exam.core.exception.ServiceException;
 import com.yf.exam.modules.qu.service.QuestionDocumentParseService;
+import com.yf.exam.modules.qu.support.DocToDocxConverter;
 import com.yf.exam.modules.qu.support.DocxBlankAwareTextExtractor;
 import com.yf.exam.modules.qu.support.AnswerDocumentTableParser;
 import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
@@ -13,8 +14,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
@@ -23,6 +26,9 @@ public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseSe
 
     @Autowired
     private QuestionTextLocalNormalizer localNormalizer;
+
+    @Autowired
+    private DocToDocxConverter docToDocxConverter;
 
     @Autowired
     private DocxBlankAwareTextExtractor docxBlankAwareTextExtractor;
@@ -65,11 +71,14 @@ public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseSe
             throw new ServiceException("上传文件不能为空！");
         }
         String ext = FilenameUtils.getExtension(file.getName());
-        if ("docx".equalsIgnoreCase(ext)) {
+        if ("doc".equalsIgnoreCase(ext) || "docx".equalsIgnoreCase(ext)) {
             try {
-                String tableResult = AnswerDocumentTableParser.parse(new FileInputStream(file));
-                if (StringUtils.isNotBlank(tableResult)) {
-                    return tableResult;
+                InputStream inputStream = openDocxInputStream(file, ext);
+                try (InputStream stream = inputStream) {
+                    String tableResult = AnswerDocumentTableParser.parse(stream);
+                    if (StringUtils.isNotBlank(tableResult)) {
+                        return tableResult;
+                    }
                 }
             } catch (Exception e) {
                 // 表格解析失败，回退到普通文本提取
@@ -103,7 +112,8 @@ public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseSe
                 return docxBlankAwareTextExtractor.extract(inputStreamSupplier.get());
             }
             if ("doc".equalsIgnoreCase(ext)) {
-                throw new ServiceException("暂不支持旧版 Word .doc 文件，请另存为 .docx 后再上传");
+                byte[] docxBytes = docToDocxConverter.convert(bytesSupplier.get());
+                return docxBlankAwareTextExtractor.extract(new ByteArrayInputStream(docxBytes));
             }
             if ("txt".equalsIgnoreCase(ext)) {
                 return new String(bytesSupplier.get(), StandardCharsets.UTF_8);
@@ -114,12 +124,23 @@ public class QuestionDocumentParseServiceImpl implements QuestionDocumentParseSe
             if ("xls".equalsIgnoreCase(ext) || "xlsx".equalsIgnoreCase(ext)) {
                 throw new ServiceException("Excel 文件请通过 AI 导入页面上传，系统将直接解析结构化数据");
             }
-            throw new ServiceException("暂只支持 docx、txt、pdf 文件！");
+            throw new ServiceException("暂只支持 doc、docx、txt、pdf 文件！");
         } catch (ServiceException e) {
             throw e;
         } catch (Exception e) {
+            if ("doc".equalsIgnoreCase(FilenameUtils.getExtension(fileName))) {
+                throw new ServiceException("旧版 Word .doc 文件转换失败：" + e.getMessage());
+            }
             throw new ServiceException("试题文档解析失败：" + e.getMessage());
         }
+    }
+
+    private InputStream openDocxInputStream(File file, String ext) throws Exception {
+        if ("doc".equalsIgnoreCase(ext)) {
+            byte[] docxBytes = docToDocxConverter.convert(Files.readAllBytes(file.toPath()));
+            return new ByteArrayInputStream(docxBytes);
+        }
+        return new FileInputStream(file);
     }
 
     @FunctionalInterface
