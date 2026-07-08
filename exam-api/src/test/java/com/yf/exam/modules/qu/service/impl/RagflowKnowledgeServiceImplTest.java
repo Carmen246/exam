@@ -1,5 +1,6 @@
 package com.yf.exam.modules.qu.service.impl;
 
+import com.yf.exam.modules.qu.config.QuestionAiConfigProvider;
 import com.yf.exam.modules.qu.config.QuestionAiProperties;
 import org.junit.jupiter.api.Test;
 
@@ -21,18 +22,25 @@ class RagflowKnowledgeServiceImplTest {
         properties.setRagflowApiKey("ragflow-key");
         properties.setRagflowDatasetId("dataset-1");
 
+        QuestionAiConfigProvider provider = new QuestionAiConfigProvider() {
+            @Override
+            public QuestionAiProperties getEffective() {
+                return properties;
+            }
+        };
+
         RagflowKnowledgeServiceImpl service = new RagflowKnowledgeServiceImpl();
-        injectProperties(service, properties);
+        injectProvider(service, provider);
 
         assertTrue(service.isAutoUploadRequested());
         assertTrue(service.isReadyForUpload());
         assertEquals("dataset-1", service.getDatasetId());
     }
 
-    private void injectProperties(RagflowKnowledgeServiceImpl service, QuestionAiProperties properties)
+    private void injectProvider(RagflowKnowledgeServiceImpl service, QuestionAiConfigProvider provider)
             throws Exception {
-        Field field = RagflowKnowledgeServiceImpl.class.getDeclaredField("properties");
+        Field field = RagflowKnowledgeServiceImpl.class.getDeclaredField("questionAiConfigProvider");
         field.setAccessible(true);
-        field.set(service, properties);
+        field.set(service, provider);
     }
 }

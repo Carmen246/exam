@@ -191,7 +191,6 @@
 
         <el-form-item label="导出内容">
           <el-checkbox v-model="wordExportForm.includeAnswer">参考答案</el-checkbox>
-          <el-checkbox v-model="wordExportForm.includeAnalysis">答案解析</el-checkbox>
         </el-form-item>
       </el-form>
 
@@ -236,8 +235,7 @@ export default {
           { rowId: 'judge', quType: 3, count: 2, score: 1 }
         ],
         totalTime: 60,
-        includeAnswer: true,
-        includeAnalysis: true
+        includeAnswer: true
       },
       wordExportRules: {
         title: [

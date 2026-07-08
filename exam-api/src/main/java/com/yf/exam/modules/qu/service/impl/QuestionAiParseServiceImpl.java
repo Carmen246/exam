@@ -2,6 +2,7 @@ package com.yf.exam.modules.qu.service.impl;
 
 import com.alibaba.fastjson.JSON;
 import com.yf.exam.core.exception.ServiceException;
+import com.yf.exam.modules.qu.config.QuestionAiConfigProvider;
 import com.yf.exam.modules.qu.config.QuestionAiProperties;
 import com.yf.exam.modules.qu.service.QuestionAiParseService;
 import com.yf.exam.modules.qu.dto.QuestionParseReqDTO;
@@ -19,6 +20,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import com.yf.exam.modules.qu.dto.QuestionImportReqDTO;
@@ -27,6 +29,7 @@ import com.yf.exam.modules.qu.service.QuService;
 import com.yf.exam.modules.qu.support.AiCallErrorSupport;
 import com.yf.exam.modules.qu.support.FillProgramBlankOptionSupport;
 import com.yf.exam.modules.qu.support.FillProgramBlankProcessor;
+import com.yf.exam.modules.sys.config.service.impl.SysAiConfigChangedEvent;
 import com.yf.exam.modules.qu.support.ProgramContentFormatter;
 import com.yf.exam.modules.qu.support.QuestionBoundaryHelper;
 import com.yf.exam.modules.repo.service.RepoService;
@@ -34,6 +37,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.yf.exam.modules.qu.dto.QuestionNormalizeTextReqDTO;
 import com.yf.exam.modules.qu.dto.QuestionNormalizeTextRespDTO;
 import com.yf.exam.modules.qu.support.QuestionAiModelFactory;
+import com.yf.exam.modules.sys.config.dto.SysAiConfigDTO;
 import com.yf.exam.modules.qu.support.ImportTaskProgressListener;
 
 import java.util.ArrayList;
@@ -140,7 +144,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
                     + "返回格式必须是：{\"normalizedText\":\"整理后的试题文本\"}";
 
     @Autowired
-    private QuestionAiProperties properties;
+    private QuestionAiConfigProvider questionAiConfigProvider;
 
     @Autowired
     @Qualifier("asyncExecutor")
@@ -156,6 +160,23 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     private QuestionAiModelFactory questionAiModelFactory;
 
     private volatile ChatLanguageModel chatModel;
+    private volatile String chatModelKey;
+    private volatile ChatLanguageModel pingChatModel;
+    private volatile String pingChatModelKey;
+
+    private QuestionAiProperties effectiveProperties() {
+        return questionAiConfigProvider.getEffective();
+    }
+
+    @EventListener
+    public void onAiConfigChanged(SysAiConfigChangedEvent event) {
+        synchronized (this) {
+            chatModel = null;
+            chatModelKey = null;
+            pingChatModel = null;
+            pingChatModelKey = null;
+        }
+    }
 
     @Override
     public QuestionNormalizeTextRespDTO normalizeText(QuestionNormalizeTextReqDTO reqDTO) {
@@ -256,7 +277,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     }
 
     private int normalizeBatchLength() {
-        Integer configured = properties.getNormalizeBatchLength();
+        Integer configured = effectiveProperties().getNormalizeBatchLength();
         if (configured != null && configured > 0) {
             return configured;
         }
@@ -264,7 +285,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     }
 
     private int normalizeBatchQuestionCount() {
-        Integer configured = properties.getNormalizeBatchQuestionCount();
+        Integer configured = effectiveProperties().getNormalizeBatchQuestionCount();
         if (configured == null || configured <= 0) {
             return NORMALIZE_BATCH_QUESTION_COUNT;
         }
@@ -272,7 +293,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     }
 
     private int normalizeConcurrency() {
-        Integer configured = properties.getNormalizeConcurrency();
+        Integer configured = effectiveProperties().getNormalizeConcurrency();
         if (configured == null || configured <= 0) {
             return 3;
         }
@@ -685,21 +706,100 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     }
 
     private ChatLanguageModel getChatModel() {
-        if (chatModel == null) {
+        QuestionAiProperties properties = effectiveProperties();
+        String cacheKey = buildChatModelCacheKey(properties);
+        if (chatModel == null || !StringUtils.equals(cacheKey, chatModelKey)) {
             synchronized (this) {
-                if (chatModel == null) {
+                if (chatModel == null || !StringUtils.equals(cacheKey, chatModelKey)) {
                     chatModel = questionAiModelFactory.create(properties);
+                    chatModelKey = cacheKey;
                 }
             }
         }
         return chatModel;
     }
 
+    private String buildChatModelCacheKey(QuestionAiProperties properties) {
+        return StringUtils.defaultString(properties.getProvider()) + "|"
+                + StringUtils.defaultString(properties.getBaseUrl()) + "|"
+                + StringUtils.defaultString(properties.getApiKey()) + "|"
+                + StringUtils.defaultString(properties.getChatId()) + "|"
+                + StringUtils.defaultString(properties.getModelName()) + "|"
+                + String.valueOf(properties.getTimeoutSeconds());
+    }
+
     @Override
     public String pingAi() {
+        return pingAi(null);
+    }
+
+    @Override
+    public String pingAi(SysAiConfigDTO draft) {
+        QuestionAiProperties properties = questionAiConfigProvider.resolveEffective(draft);
+        validatePingConfig(properties);
+        String token = buildPingToken();
         List<ChatMessage> messages = new ArrayList<>();
-        messages.add(UserMessage.from("请只回复 OK"));
-        return readAiText(invokeAi(messages));
+        messages.add(UserMessage.from("连通性测试：请仅回复验证码 " + token + "，不要包含其它文字。"));
+        String answer;
+        try {
+            answer = readAiText(getPingChatModel(properties).generate(messages));
+        } catch (Exception e) {
+            throw new ServiceException(AiCallErrorSupport.toUserMessage(e));
+        }
+        assertPingAnswer(answer, token);
+        return buildPingSuccessMessage(properties);
+    }
+
+    private void validatePingConfig(QuestionAiProperties properties) {
+        if (properties == null) {
+            throw new ServiceException("AI 配置为空");
+        }
+        if (StringUtils.isBlank(properties.getBaseUrl())) {
+            throw new ServiceException("请先填写 API 地址");
+        }
+        if (StringUtils.isBlank(properties.getApiKey())) {
+            throw new ServiceException("请先填写 API Key");
+        }
+        if (QuestionAiModelFactory.PROVIDER_RAGFLOW.equalsIgnoreCase(properties.getProvider())
+                && StringUtils.isBlank(properties.getChatId())) {
+            throw new ServiceException("RAGFlow 模式下请先填写聊天助手 ID");
+        }
+    }
+
+    private String buildPingToken() {
+        return "KT" + (System.currentTimeMillis() % 1000000L);
+    }
+
+    private void assertPingAnswer(String answer, String token) {
+        if (StringUtils.isBlank(answer)) {
+            throw new ServiceException("AI 返回为空，连通测试未通过");
+        }
+        String trimmed = answer.trim();
+        if (trimmed.toLowerCase().contains("<html")) {
+            throw new ServiceException("返回内容为网页而不是模型回复，请检查 API 地址是否正确");
+        }
+        if (!StringUtils.containsIgnoreCase(trimmed, token)) {
+            String preview = trimmed.length() > 80 ? trimmed.substring(0, 80) + "..." : trimmed;
+            throw new ServiceException("AI 未返回预期验证码，连通测试未通过。实际回复：" + preview);
+        }
+    }
+
+    private String buildPingSuccessMessage(QuestionAiProperties properties) {
+        String model = StringUtils.defaultIfBlank(properties.getModelName(), "默认模型");
+        return "模型 " + model + " 响应正常，API 配置有效";
+    }
+
+    private ChatLanguageModel getPingChatModel(QuestionAiProperties properties) {
+        String cacheKey = buildChatModelCacheKey(properties) + "|ping";
+        if (pingChatModel == null || !StringUtils.equals(cacheKey, pingChatModelKey)) {
+            synchronized (this) {
+                if (pingChatModel == null || !StringUtils.equals(cacheKey, pingChatModelKey)) {
+                    pingChatModel = questionAiModelFactory.create(properties, false);
+                    pingChatModelKey = cacheKey;
+                }
+            }
+        }
+        return pingChatModel;
     }
 
     private void checkRequest(QuestionParseReqDTO reqDTO) {
@@ -717,7 +817,7 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
     }
 
     private int maxBatchLength(int defaultValue) {
-        Integer configured = properties.getMaxTextLength();
+        Integer configured = effectiveProperties().getMaxTextLength();
         if (configured == null || configured <= 0) {
             return defaultValue;
         }

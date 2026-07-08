@@ -3,7 +3,7 @@ package com.yf.exam.modules.qu.service.impl;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.yf.exam.ability.upload.config.UploadConfig;
 import com.yf.exam.core.exception.ServiceException;
-import com.yf.exam.modules.qu.config.QuestionAiProperties;
+import com.yf.exam.modules.qu.config.QuestionAiConfigProvider;
 import com.yf.exam.modules.qu.dto.AnswerDocumentMergeResultDTO;
 import com.yf.exam.modules.qu.dto.ImportBatchStatusDTO;
 import com.yf.exam.modules.qu.dto.QuestionImportTaskCreateRespDTO;
@@ -72,7 +72,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
     private RagflowKnowledgeService ragflowKnowledgeService;
 
     @Autowired
-    private QuestionAiProperties questionAiProperties;
+    private QuestionAiConfigProvider questionAiConfigProvider;
 
     @Autowired
     private QuestionAnswerDocumentMerger answerDocumentMerger;
@@ -182,7 +182,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
             String message = ragflowKnowledgeService.getUploadSkipReason();
             task.setRagflowMessage(message);
             addTaskWarning(task, message);
-            if (Boolean.TRUE.equals(questionAiProperties.getRagflowUploadFailFast())) {
+            if (Boolean.TRUE.equals(questionAiConfigProvider.getEffective().getRagflowUploadFailFast())) {
                 throw new ServiceException(message);
             }
             return;
@@ -208,7 +208,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
             task.setRagflowMessage(message);
             addTaskWarning(task, message);
             log.warn("RAGFlow 知识库上传失败，继续执行本地 AI 导入：{}", message, e);
-            if (Boolean.TRUE.equals(questionAiProperties.getRagflowUploadFailFast())) {
+            if (Boolean.TRUE.equals(questionAiConfigProvider.getEffective().getRagflowUploadFailFast())) {
                 throw e instanceof ServiceException ? (ServiceException) e : new ServiceException(message);
             }
         }
@@ -524,9 +524,9 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
     }
 
     private int aiConcurrency() {
-        Integer configured = questionAiProperties.getAiConcurrency();
+        Integer configured = questionAiConfigProvider.getEffective().getAiConcurrency();
         if (configured == null || configured <= 0) {
-            configured = questionAiProperties.getNormalizeConcurrency();
+            configured = questionAiConfigProvider.getEffective().getNormalizeConcurrency();
         }
         if (configured == null || configured <= 0) {
             return 3;

@@ -30,4 +30,7 @@ public interface QuestionAiParseService {
 
     /** 测试当前 AI 后端（含 RAGFlow）是否连通 */
     String pingAi();
+
+    /** 使用页面草稿配置测试连通性（未保存也可测） */
+    String pingAi(com.yf.exam.modules.sys.config.dto.SysAiConfigDTO draft);
 }

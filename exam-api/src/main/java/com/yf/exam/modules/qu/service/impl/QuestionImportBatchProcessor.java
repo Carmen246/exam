@@ -1,7 +1,7 @@
 package com.yf.exam.modules.qu.service.impl;
 
 import com.yf.exam.core.exception.ServiceException;
-import com.yf.exam.modules.qu.config.QuestionAiProperties;
+import com.yf.exam.modules.qu.config.QuestionAiConfigProvider;
 import com.yf.exam.modules.qu.dto.QuestionParseReqDTO;
 import com.yf.exam.modules.qu.dto.QuestionParseRespDTO;
 import com.yf.exam.modules.qu.dto.ext.QuDetailDTO;
@@ -28,7 +28,7 @@ public class QuestionImportBatchProcessor {
     private QuestionAiParseService questionAiParseService;
 
     @Autowired
-    private QuestionAiProperties questionAiProperties;
+    private QuestionAiConfigProvider questionAiConfigProvider;
 
     public BatchProcessResult processBatch(String chunk, QuestionImportMode mode, QuestionParseReqDTO baseReq,
             String batchNo, QuestionImportBatchState state, boolean retrying) {
@@ -102,16 +102,16 @@ public class QuestionImportBatchProcessor {
 
     private boolean isBatchParseInsufficient(String chunk, List<QuDetailDTO> questions) {
         int expected = documentParseService.countQuestionBlocks(chunk);
-        int minExpected = questionAiProperties.getParseFallbackMinExpected() == null
+        int minExpected = questionAiConfigProvider.getEffective().getParseFallbackMinExpected() == null
                 ? 3
-                : questionAiProperties.getParseFallbackMinExpected();
+                : questionAiConfigProvider.getEffective().getParseFallbackMinExpected();
         if (expected < minExpected) {
             return false;
         }
         int actual = CollectionUtils.isEmpty(questions) ? 0 : questions.size();
-        double ratio = questionAiProperties.getParseFallbackRatio() == null
+        double ratio = questionAiConfigProvider.getEffective().getParseFallbackRatio() == null
                 ? 0.3
-                : questionAiProperties.getParseFallbackRatio();
+                : questionAiConfigProvider.getEffective().getParseFallbackRatio();
         int threshold = Math.max(1, (int) Math.floor(expected * ratio));
         return actual < threshold;
     }

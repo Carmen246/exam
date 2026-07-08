@@ -4,6 +4,7 @@ import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import com.yf.exam.core.exception.ServiceException;
+import com.yf.exam.modules.qu.config.QuestionAiConfigProvider;
 import com.yf.exam.modules.qu.config.QuestionAiProperties;
 import com.yf.exam.modules.qu.dto.RagflowDocumentUploadResultDTO;
 import com.yf.exam.modules.qu.service.RagflowKnowledgeService;
@@ -32,14 +33,18 @@ public class RagflowKnowledgeServiceImpl implements RagflowKnowledgeService {
     private static final int DEFAULT_DATASET_PAGE_SIZE = 10;
 
     @Autowired
-    private QuestionAiProperties properties;
+    private QuestionAiConfigProvider questionAiConfigProvider;
+
+    private QuestionAiProperties properties() {
+        return questionAiConfigProvider.getEffective();
+    }
 
     private volatile String resolvedDatasetId;
     private volatile String datasetResolveError;
 
     @Override
     public boolean isAutoUploadRequested() {
-        return Boolean.TRUE.equals(properties.getRagflowAutoUpload());
+        return Boolean.TRUE.equals(properties().getRagflowAutoUpload());
     }
 
     @Override
@@ -75,7 +80,7 @@ public class RagflowKnowledgeServiceImpl implements RagflowKnowledgeService {
 
     @Override
     public String getDatasetId() {
-        String configuredDatasetId = StringUtils.trimToEmpty(properties.getRagflowDatasetId());
+        String configuredDatasetId = StringUtils.trimToEmpty(properties().getRagflowDatasetId());
         if (StringUtils.isNotBlank(configuredDatasetId)) {
             return configuredDatasetId;
         }
@@ -159,7 +164,7 @@ public class RagflowKnowledgeServiceImpl implements RagflowKnowledgeService {
     }
 
     private String resolveDatasetId() {
-        String configuredDatasetId = StringUtils.trimToEmpty(properties.getRagflowDatasetId());
+        String configuredDatasetId = StringUtils.trimToEmpty(properties().getRagflowDatasetId());
         if (StringUtils.isNotBlank(configuredDatasetId)) {
             resolvedDatasetId = configuredDatasetId;
             datasetResolveError = "";
@@ -210,7 +215,7 @@ public class RagflowKnowledgeServiceImpl implements RagflowKnowledgeService {
     }
 
     private JSONObject selectDataset(JSONArray datasets) {
-        String datasetName = StringUtils.trimToEmpty(properties.getRagflowDatasetName());
+        String datasetName = StringUtils.trimToEmpty(properties().getRagflowDatasetName());
         JSONObject firstWithId = null;
         for (int i = 0; i < datasets.size(); i++) {
             JSONObject item = toJsonObject(datasets.get(i));
@@ -309,9 +314,9 @@ public class RagflowKnowledgeServiceImpl implements RagflowKnowledgeService {
 
     private RestTemplate restTemplate() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        int timeout = properties.getRagflowUploadTimeoutSeconds() == null
+        int timeout = properties().getRagflowUploadTimeoutSeconds() == null
                 ? 120
-                : properties.getRagflowUploadTimeoutSeconds();
+                : properties().getRagflowUploadTimeoutSeconds();
         factory.setConnectTimeout(timeout * 1000);
         factory.setReadTimeout(timeout * 1000);
         return new RestTemplate(factory);
@@ -327,9 +332,9 @@ public class RagflowKnowledgeServiceImpl implements RagflowKnowledgeService {
     }
 
     private String datasetListUrl() {
-        int pageSize = properties.getRagflowDatasetPageSize() == null || properties.getRagflowDatasetPageSize() <= 0
+        int pageSize = properties().getRagflowDatasetPageSize() == null || properties().getRagflowDatasetPageSize() <= 0
                 ? DEFAULT_DATASET_PAGE_SIZE
-                : properties.getRagflowDatasetPageSize();
+                : properties().getRagflowDatasetPageSize();
         return UriComponentsBuilder.fromHttpUrl(trimTrailingSlash(ragflowBaseUrl()))
                 .pathSegment("api", "v1", "datasets")
                 .queryParam("page", 1)
@@ -339,23 +344,23 @@ public class RagflowKnowledgeServiceImpl implements RagflowKnowledgeService {
     }
 
     private String ragflowBaseUrl() {
-        String dedicated = StringUtils.trimToEmpty(properties.getRagflowBaseUrl());
+        String dedicated = StringUtils.trimToEmpty(properties().getRagflowBaseUrl());
         if (StringUtils.isNotBlank(dedicated)) {
             return dedicated;
         }
-        if ("ragflow".equalsIgnoreCase(StringUtils.trimToEmpty(properties.getProvider()))) {
-            return StringUtils.trimToEmpty(properties.getBaseUrl());
+        if ("ragflow".equalsIgnoreCase(StringUtils.trimToEmpty(properties().getProvider()))) {
+            return StringUtils.trimToEmpty(properties().getBaseUrl());
         }
         return "";
     }
 
     private String ragflowApiKey() {
-        String dedicated = StringUtils.trimToEmpty(properties.getRagflowApiKey());
+        String dedicated = StringUtils.trimToEmpty(properties().getRagflowApiKey());
         if (StringUtils.isNotBlank(dedicated)) {
             return dedicated;
         }
-        if ("ragflow".equalsIgnoreCase(StringUtils.trimToEmpty(properties.getProvider()))) {
-            return StringUtils.trimToEmpty(properties.getApiKey());
+        if ("ragflow".equalsIgnoreCase(StringUtils.trimToEmpty(properties().getProvider()))) {
+            return StringUtils.trimToEmpty(properties().getApiKey());
         }
         return "";
     }

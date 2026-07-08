@@ -751,6 +751,37 @@ INSERT INTO `sys_config` (`id`, `site_name`, `front_logo`, `back_logo`, `copy_ri
 COMMIT;
 
 -- ----------------------------
+-- Table structure for sys_ai_config
+-- ----------------------------
+DROP TABLE IF EXISTS `sys_ai_config`;
+CREATE TABLE `sys_ai_config` (
+  `id` varchar(32) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'ID',
+  `enabled` tinyint(1) NOT NULL DEFAULT '1' COMMENT '是否启用数据库配置',
+  `provider` varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '提供方 openai/ragflow',
+  `base_url` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'API地址',
+  `api_key` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'API Key',
+  `chat_id` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'RAGFlow聊天助手ID',
+  `model_name` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '模型名称',
+  `timeout_seconds` int DEFAULT NULL COMMENT '请求超时秒数',
+  `ragflow_base_url` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'RAGFlow知识库API地址',
+  `ragflow_api_key` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'RAGFlow API Key',
+  `ragflow_dataset_id` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'RAGFlow知识库ID',
+  `ragflow_dataset_name` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'RAGFlow知识库名称',
+  `ragflow_auto_upload` tinyint(1) DEFAULT NULL COMMENT '上传试卷时同步写入RAGFlow',
+  `ragflow_upload_fail_fast` tinyint(1) DEFAULT NULL COMMENT 'RAGFlow上传失败时中断导入',
+  `create_time` datetime DEFAULT NULL COMMENT '创建时间',
+  `update_time` datetime DEFAULT NULL COMMENT '更新时间',
+  PRIMARY KEY (`id`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='AI接口配置';
+
+-- ----------------------------
+-- Records of sys_ai_config
+-- ----------------------------
+BEGIN;
+INSERT INTO `sys_ai_config` (`id`, `enabled`, `create_time`, `update_time`) VALUES ('1', 1, NOW(), NOW());
+COMMIT;
+
+-- ----------------------------
 -- Table structure for sys_depart
 -- ----------------------------
 DROP TABLE IF EXISTS `sys_depart`;

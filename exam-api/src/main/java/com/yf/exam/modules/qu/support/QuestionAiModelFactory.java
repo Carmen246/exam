@@ -19,6 +19,13 @@ public class QuestionAiModelFactory {
     public static final String PROVIDER_RAGFLOW = "ragflow";
 
     public ChatLanguageModel create(QuestionAiProperties properties) {
+        return create(properties, true);
+    }
+
+    /**
+     * @param jsonResponse 是否要求模型以 JSON 对象格式回复（试题解析需要，连通性测试不需要）
+     */
+    public ChatLanguageModel create(QuestionAiProperties properties, boolean jsonResponse) {
         if (properties == null) {
             throw new ServiceException("AI 配置为空");
         }
@@ -47,8 +54,10 @@ public class QuestionAiModelFactory {
                     StringUtils.defaultIfBlank(properties.getModelName(), "model"), properties.getTimeoutSeconds());
         } else {
             builder.baseUrl(trimTrailingSlash(properties.getBaseUrl()))
-                    .modelName(properties.getModelName())
-                    .responseFormat("json_object");
+                    .modelName(properties.getModelName());
+            if (jsonResponse) {
+                builder.responseFormat("json_object");
+            }
         }
 
         return builder.build();
