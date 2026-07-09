@@ -7,7 +7,7 @@
       <div class="logo-box">
         <div>
           <a class="logo-title">
-            <img :src="siteData.backLogo" class="logo-img">
+            <img v-if="siteData.backLogo" :src="siteData.backLogo" class="logo-img">
             <span class="site-title">{{ siteData.siteName }}</span>
           </a>
         </div>
@@ -17,7 +17,7 @@
 
     </div>
 
-    <div class="footer" v-html="siteData.copyRight" />
+    <div v-if="siteData.copyRight" class="footer" v-html="siteData.copyRight" />
 
   </div>
 

@@ -31,7 +31,7 @@ public class SysConfigServiceImpl extends ServiceImpl<SysConfigMapper, SysConfig
         if (entity != null) {
             BeanMapper.copy(entity, dto);
         } else {
-            dto.setSiteName("云帆在线培训考试系统");
+            dto.setSiteName("在线考试系统");
         }
         return dto;
     }

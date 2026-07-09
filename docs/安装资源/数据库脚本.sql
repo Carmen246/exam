@@ -43,7 +43,7 @@ CREATE TABLE `el_exam` (
 -- Records of el_exam
 -- ----------------------------
 BEGIN;
-INSERT INTO `el_exam` (`id`, `title`, `content`, `open_type`, `state`, `time_limit`, `start_time`, `end_time`, `create_time`, `update_time`, `total_score`, `total_time`, `qualify_score`) VALUES ('1587621704140427265', '【云帆演示】考试', '【云帆演示】考试', 1, 0, 0, NULL, NULL, '2022-11-02 09:44:46', '2022-11-02 09:44:46', 100, 30, 60);
+INSERT INTO `el_exam` (`id`, `title`, `content`, `open_type`, `state`, `time_limit`, `start_time`, `end_time`, `create_time`, `update_time`, `total_score`, `total_time`, `qualify_score`) VALUES ('1587621704140427265', '演示考试', '演示考试', 1, 0, 0, NULL, NULL, '2022-11-02 09:44:46', '2022-11-02 09:44:46', 100, 30, 60);
 COMMIT;
 
 -- ----------------------------
@@ -433,7 +433,7 @@ CREATE TABLE `el_repo` (
 -- Records of el_repo
 -- ----------------------------
 BEGIN;
-INSERT INTO `el_repo` (`id`, `code`, `title`, `remark`, `create_time`, `update_time`) VALUES ('1587622451624120321', '', '【云帆】演示题库', '【云帆】演示题库', '2022-11-02 09:47:44', '2022-11-02 09:47:44');
+INSERT INTO `el_repo` (`id`, `code`, `title`, `remark`, `create_time`, `update_time`) VALUES ('1587622451624120321', '', '演示题库', '演示题库', '2022-11-02 09:47:44', '2022-11-02 09:47:44');
 COMMIT;
 
 -- ----------------------------
@@ -747,7 +747,7 @@ CREATE TABLE `sys_config` (
 -- Records of sys_config
 -- ----------------------------
 BEGIN;
-INSERT INTO `sys_config` (`id`, `site_name`, `front_logo`, `back_logo`, `copy_right`, `create_time`, `update_time`, `create_by`, `update_by`, `data_flag`) VALUES ('1', '云帆在线培训考试系统', NULL, NULL, NULL, '2020-12-03 16:51:30', '2020-12-03 16:51:30', '', '', 1);
+INSERT INTO `sys_config` (`id`, `site_name`, `front_logo`, `back_logo`, `copy_right`, `create_time`, `update_time`, `create_by`, `update_by`, `data_flag`) VALUES ('1', '在线考试系统', NULL, NULL, NULL, '2020-12-03 16:51:30', '2020-12-03 16:51:30', '', '', 1);
 COMMIT;
 
 -- ----------------------------
@@ -799,7 +799,7 @@ CREATE TABLE `sys_depart` (
 -- Records of sys_depart
 -- ----------------------------
 BEGIN;
-INSERT INTO `sys_depart` (`id`, `dept_type`, `parent_id`, `dept_name`, `dept_code`, `sort`) VALUES ('1302853644578000898', 1, '0', '北京云帆互联科技有限公司', 'A01', 1);
+INSERT INTO `sys_depart` (`id`, `dept_type`, `parent_id`, `dept_name`, `dept_code`, `sort`) VALUES ('1302853644578000898', 1, '0', '默认组织', 'A01', 1);
 INSERT INTO `sys_depart` (`id`, `dept_type`, `parent_id`, `dept_name`, `dept_code`, `sort`) VALUES ('1302855940200284161', 1, '1302855776496599041', '后端组', 'A01A01A01', 2);
 INSERT INTO `sys_depart` (`id`, `dept_type`, `parent_id`, `dept_name`, `dept_code`, `sort`) VALUES ('1302855994843676674', 1, '1302855776496599041', '前端组', 'A01A01A02', 1);
 INSERT INTO `sys_depart` (`id`, `dept_type`, `parent_id`, `dept_name`, `dept_code`, `sort`) VALUES ('1302856017283203073', 1, '1302855776496599041', '产品组', 'A01A01A03', 3);

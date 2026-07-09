@@ -12,10 +12,6 @@
               <file-upload v-model="postForm.backLogo" accept=".jpg,.jepg,.png" />
             </el-form-item>
 
-            <el-form-item label="版权信息">
-              <el-input v-model="postForm.copyRight" placeholder="登录页底部版权信息" />
-            </el-form-item>
-
             <el-row>
               <el-button type="primary" @click="submitForm">保存</el-button>
             </el-row>
