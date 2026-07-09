@@ -64,7 +64,7 @@
 3. 将 `docs/安装资源/数据库脚本.sql` 导入数据库。
 4. 修改 `docs/运行包/application-local.yml`，配置自己的 MySQL 连接信息。
 5. Windows 环境执行 `start.bat`，Linux 环境执行 `start.sh`。
-6. 启动后访问 `http://localhost:8101`。
+6. 后端启动后提供 API 服务，默认地址为 `http://localhost:8101`。
 
 默认账号：
 
@@ -73,7 +73,7 @@
 
 ### 源码运行
 
-后端工程位于 `exam-api`，前端工程位于 `exam-vue`。
+后端工程位于 `exam-api`，前端工程位于 `exam-vue`。后端不再内置前端打包产物，前端需要单独启动或单独部署。
 
 后端启动：
 
@@ -89,6 +89,8 @@ cd exam-vue
 npm install
 npm run serve
 ```
+
+前端开发环境会通过代理访问后端接口，默认后端地址为 `http://localhost:8101`。
 
 ## 项目文档
 
