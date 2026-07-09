@@ -10,5 +10,7 @@ public interface SysAiConfigService extends IService<SysAiConfig> {
 
     SysAiConfig getEntity();
 
+    SysAiConfig getEntityForUser(String userId);
+
     void saveConfig(SysAiConfigDTO reqDTO);
 }

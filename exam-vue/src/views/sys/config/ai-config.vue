@@ -96,7 +96,7 @@ export default {
   methods: {
     createDefaultForm() {
       return {
-        id: '1',
+        id: '',
         enabled: true,
         provider: 'openai',
         baseUrl: '',
@@ -123,8 +123,10 @@ export default {
         if (this.form.ragflowApiKeyConfigured) {
           this.form.ragflowApiKey = MASKED_SECRET
         }
-      }).catch(() => {
+      }).catch(err => {
         this.form = this.createDefaultForm()
+        const message = (err && err.message) || '加载 AI 配置失败，请确认数据库表 sys_ai_config 已创建'
+        this.$message.error(message)
       })
     },
     submitForm() {
@@ -146,15 +148,17 @@ export default {
       }
 
       const payload = { ...this.form, enabled: true }
-        if (payload.apiKey === MASKED_SECRET) {
-          payload.apiKey = ''
-        }
-        if (payload.ragflowApiKey === MASKED_SECRET) {
-          payload.ragflowApiKey = ''
-        }
+      delete payload.apiKeyConfigured
+      delete payload.ragflowApiKeyConfigured
+      if (payload.apiKey === MASKED_SECRET) {
+        payload.apiKey = ''
+      }
+      if (payload.ragflowApiKey === MASKED_SECRET) {
+        payload.ragflowApiKey = ''
+      }
 
-        this.saving = true
-        saveAiConfig(payload).then(() => {
+      this.saving = true
+      saveAiConfig(payload).then(() => {
           this.$message.success('AI 配置保存成功')
           this.loadData()
         }).finally(() => {

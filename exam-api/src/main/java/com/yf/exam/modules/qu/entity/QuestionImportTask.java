@@ -72,5 +72,8 @@ public class QuestionImportTask implements Serializable {
 
     private String errorMessage;
 
+    /** 创建任务的用户 ID */
+    private String userId;
+
     private long createTime = System.currentTimeMillis();
 }

@@ -24,7 +24,6 @@ import com.yf.exam.modules.qu.service.QuAnswerService;
 import com.yf.exam.modules.qu.service.QuRepoService;
 import com.yf.exam.modules.qu.service.QuService;
 import com.yf.exam.modules.qu.utils.ImageCheckUtils;
-import com.yf.exam.modules.repo.service.RepoService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;

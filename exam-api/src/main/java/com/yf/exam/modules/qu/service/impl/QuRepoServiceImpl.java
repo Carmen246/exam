@@ -14,7 +14,6 @@ import com.yf.exam.modules.qu.entity.QuRepo;
 import com.yf.exam.modules.qu.mapper.QuMapper;
 import com.yf.exam.modules.qu.mapper.QuRepoMapper;
 import com.yf.exam.modules.qu.service.QuRepoService;
-import com.yf.exam.modules.repo.service.RepoService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
@@ -36,9 +35,6 @@ public class QuRepoServiceImpl extends ServiceImpl<QuRepoMapper, QuRepo> impleme
 
     @Autowired
     private QuMapper quMapper;
-
-    @Autowired
-    private RepoService repoService;
 
     @Override
     public IPage<QuRepoDTO> paging(PagingReqDTO<QuRepoDTO> reqDTO) {

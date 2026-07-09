@@ -2,24 +2,30 @@ package com.yf.exam.modules.qu.controller;
 
 import com.yf.exam.core.api.ApiRest;
 import com.yf.exam.core.api.controller.BaseController;
+import com.yf.exam.core.exception.ServiceException;
 import com.yf.exam.modules.qu.dto.QuestionParseTextRespDTO;
 import com.yf.exam.modules.qu.service.QuestionDocumentParseService;
 import io.swagger.annotations.ApiOperation;
 import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.shiro.authz.annotation.RequiresRoles;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.yf.exam.modules.qu.dto.QuestionImportTaskCreateRespDTO;
 import com.yf.exam.modules.qu.dto.QuestionImportTaskStatusRespDTO;
 import com.yf.exam.modules.qu.service.QuestionImportTaskService;
+import org.springframework.util.CollectionUtils;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.ArrayList;
 import com.yf.exam.modules.qu.service.QuestionAiParseService;
 import com.yf.exam.modules.qu.dto.QuestionParseReqDTO;
 import com.yf.exam.modules.qu.dto.QuestionParseRespDTO;
 import com.yf.exam.modules.qu.dto.QuestionImportReqDTO;
 import com.yf.exam.modules.qu.dto.QuestionImportRespDTO;
+import com.yf.exam.modules.qu.dto.ext.QuDetailDTO;
+import com.yf.exam.modules.qu.entity.QuestionImportTask;
 import com.yf.exam.modules.qu.dto.QuestionNormalizeTextReqDTO;
 import com.yf.exam.modules.qu.dto.QuestionNormalizeTextRespDTO;
 @RestController
@@ -107,7 +113,23 @@ public class QuestionAiImportController extends BaseController {
     @ApiOperation(value = "AI确认导入试题")
     @RequestMapping(value = "/confirm-import", method = {RequestMethod.POST})
     public ApiRest<QuestionImportRespDTO> confirmImport(@RequestBody QuestionImportReqDTO reqDTO) {
+        if (reqDTO == null || StringUtils.isBlank(reqDTO.getTaskId())) {
+            throw new ServiceException("导入任务 ID 不能为空");
+        }
+        QuestionImportTask task = questionImportTaskService.requireImportReadyTask(reqDTO.getTaskId());
+        bindTaskImportContext(reqDTO, task);
         QuestionImportRespDTO respDTO = questionAiParseService.importQuestions(reqDTO);
         return super.success(respDTO);
+    }
+
+    private void bindTaskImportContext(QuestionImportReqDTO reqDTO, QuestionImportTask task) {
+        if (CollectionUtils.isEmpty(reqDTO.getQuestions())) {
+            throw new ServiceException("导入试题不能为空");
+        }
+        Integer level = task.getLevel() == null ? 1 : task.getLevel();
+        for (QuDetailDTO question : reqDTO.getQuestions()) {
+            question.setRepoIds(new ArrayList<>(task.getRepoIds()));
+            question.setLevel(level);
+        }
     }
 }

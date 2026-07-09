@@ -4,7 +4,14 @@ import org.springframework.context.ApplicationEvent;
 
 public class SysAiConfigChangedEvent extends ApplicationEvent {
 
-    public SysAiConfigChangedEvent(Object source) {
+    private final String userId;
+
+    public SysAiConfigChangedEvent(Object source, String userId) {
         super(source);
+        this.userId = userId;
+    }
+
+    public String getUserId() {
+        return userId;
     }
 }

@@ -2,6 +2,7 @@ package com.yf.exam.modules.qu.service.impl;
 
 import com.alibaba.fastjson.JSON;
 import com.yf.exam.core.exception.ServiceException;
+import com.yf.exam.modules.qu.config.AiUserContext;
 import com.yf.exam.modules.qu.config.QuestionAiConfigProvider;
 import com.yf.exam.modules.qu.config.QuestionAiProperties;
 import com.yf.exam.modules.qu.service.QuestionAiParseService;
@@ -719,8 +720,21 @@ public class QuestionAiParseServiceImpl implements QuestionAiParseService {
         return chatModel;
     }
 
+    private String resolveAiUserId() {
+        String contextUserId = AiUserContext.getUserId();
+        if (StringUtils.isNotBlank(contextUserId)) {
+            return contextUserId;
+        }
+        try {
+            return com.yf.exam.modules.user.UserUtils.getUserId(false);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     private String buildChatModelCacheKey(QuestionAiProperties properties) {
-        return StringUtils.defaultString(properties.getProvider()) + "|"
+        return StringUtils.defaultString(resolveAiUserId()) + "|"
+                + StringUtils.defaultString(properties.getProvider()) + "|"
                 + StringUtils.defaultString(properties.getBaseUrl()) + "|"
                 + StringUtils.defaultString(properties.getApiKey()) + "|"
                 + StringUtils.defaultString(properties.getChatId()) + "|"

@@ -25,6 +25,8 @@ import com.yf.exam.modules.qu.support.QuestionAnswerDocumentMerger;
 import com.yf.exam.modules.qu.support.AiCallErrorSupport;
 import com.yf.exam.modules.qu.support.QuestionBoundaryHelper;
 import com.yf.exam.modules.qu.support.QuestionExcelImportParser;
+import com.yf.exam.modules.qu.config.AiUserContext;
+import com.yf.exam.modules.user.UserUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -103,8 +105,10 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
         }
 
         String taskId = IdWorker.getIdStr();
+        String userId = UserUtils.getUserId();
         QuestionImportTask task = new QuestionImportTask();
         task.setTaskId(taskId);
+        task.setUserId(userId);
         task.setRepoIds(new ArrayList<>(repoIds));
         task.setLevel(level == null ? 1 : level);
         task.setImportMode(resolveImportMode(importMode, deepAiNormalize).name());
@@ -113,7 +117,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
 
         if (hasFile) {
             task.setFileName(normalizeUploadedFileName(file.getOriginalFilename()));
-            task.setTempFile(saveTempFile(file, taskId));
+            task.setTempFile(saveTempFile(file, userId, taskId));
         } else {
             task.setInputText(text.trim());
         }
@@ -121,7 +125,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
         boolean hasAnswerFile = answerFile != null && !answerFile.isEmpty();
         if (hasAnswerFile) {
             task.setAnswerFileName(normalizeUploadedFileName(answerFile.getOriginalFilename()));
-            task.setAnswerTempFile(saveTempFile(answerFile, taskId, "-answer"));
+            task.setAnswerTempFile(saveTempFile(answerFile, userId, taskId, "-answer"));
         }
 
         tasks.put(taskId, task);
@@ -136,11 +140,25 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
     @Override
     public QuestionImportTaskStatusRespDTO getTaskStatus(String taskId) {
         cleanupExpiredTasks();
-        QuestionImportTask task = tasks.get(taskId);
-        if (task == null) {
-            throw new ServiceException("导入任务不存在或已过期");
+        return toStatusResp(requireOwnedTask(taskId));
+    }
+
+    @Override
+    public void validateTaskReadyForImport(String taskId) {
+        requireImportReadyTask(taskId);
+    }
+
+    @Override
+    public QuestionImportTask requireImportReadyTask(String taskId) {
+        QuestionImportTask task = requireOwnedTask(taskId);
+        if (task.getStatus() != QuestionImportTaskStatus.COMPLETED
+                && task.getStatus() != QuestionImportTaskStatus.PARTIAL_COMPLETED) {
+            throw new ServiceException("导入任务尚未完成，无法确认入库");
         }
-        return toStatusResp(task);
+        if (CollectionUtils.isEmpty(task.getQuestions())) {
+            throw new ServiceException("导入任务中没有可入库的试题");
+        }
+        return task;
     }
 
     @Override
@@ -151,6 +169,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
         }
 
         try {
+            AiUserContext.setUserId(task.getUserId());
             uploadQuestionFileToRagflow(task);
             if (isExcelTask(task)) {
                 processExcelTask(task);
@@ -161,10 +180,12 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
         } catch (Exception e) {
             failTask(task, e);
         } finally {
+            AiUserContext.clear();
             deleteTempFile(task.getTempFile());
             deleteTempFile(task.getAnswerTempFile());
             task.setTempFile(null);
             task.setAnswerTempFile(null);
+            deleteTaskWorkspace(task);
         }
     }
 
@@ -232,10 +253,7 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
     @Override
     public QuestionImportTaskStatusRespDTO retryTask(String taskId, Integer batchNo) {
         cleanupExpiredTasks();
-        QuestionImportTask task = tasks.get(taskId);
-        if (task == null) {
-            throw new ServiceException("导入任务不存在或已过期");
-        }
+        QuestionImportTask task = requireOwnedTask(taskId);
         if (task.getStatus() != QuestionImportTaskStatus.FAILED
                 && task.getStatus() != QuestionImportTaskStatus.PARTIAL_COMPLETED) {
             throw new ServiceException("只有失败或部分完成的任务才能重试");
@@ -265,9 +283,12 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
         final Integer retryBatchNo = batchNo;
         asyncExecutor.execute(() -> {
             try {
+                AiUserContext.setUserId(task.getUserId());
                 runBatchPipeline(task, true, retryBatchNo);
             } catch (Exception e) {
                 failTask(task, e);
+            } finally {
+                AiUserContext.clear();
             }
         });
 
@@ -583,18 +604,33 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
         return start + (int) Math.round((completed * 1.0 / total) * range);
     }
 
-    private File saveTempFile(MultipartFile file, String taskId) {
-        return saveTempFile(file, taskId, "");
+    private QuestionImportTask requireOwnedTask(String taskId) {
+        if (StringUtils.isBlank(taskId)) {
+            throw new ServiceException("导入任务 ID 不能为空");
+        }
+        QuestionImportTask task = tasks.get(taskId);
+        if (task == null) {
+            throw new ServiceException("导入任务不存在或已过期");
+        }
+        String currentUserId = UserUtils.getUserId();
+        if (StringUtils.isBlank(task.getUserId()) || !StringUtils.equals(task.getUserId(), currentUserId)) {
+            throw new ServiceException("无权访问该导入任务");
+        }
+        return task;
     }
 
-    private File saveTempFile(MultipartFile file, String taskId, String nameSuffix) {
+    private File saveTempFile(MultipartFile file, String userId, String taskId) {
+        return saveTempFile(file, userId, taskId, "");
+    }
+
+    private File saveTempFile(MultipartFile file, String userId, String taskId, String nameSuffix) {
         try {
             String ext = FilenameUtils.getExtension(file.getOriginalFilename());
             if (StringUtils.isBlank(ext)) {
                 throw new ServiceException("无法识别文件类型");
             }
 
-            File dir = resolveAiImportDir();
+            File dir = resolveAiImportDir(userId, taskId);
             File dest = new File(dir, taskId + nameSuffix + "." + ext);
             file.transferTo(dest);
             if ("doc".equalsIgnoreCase(ext)) {
@@ -627,12 +663,27 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
         return fileName;
     }
 
-    private File resolveAiImportDir() {
+    private File resolveAiImportDir(String userId, String taskId) {
+        File dir = new File(new File(resolveAiImportRootDir(), sanitizePathSegment(userId)), sanitizePathSegment(taskId));
+        if (!ensureWritableDir(dir)) {
+            throw new ServiceException("创建临时目录失败：" + dir.getAbsolutePath());
+        }
+        return dir;
+    }
+
+    private File resolveAiImportRootDir() {
         File dir = new File(resolveUploadBaseDir(), "ai-import");
         if (!ensureWritableDir(dir)) {
             throw new ServiceException("创建临时目录失败：" + dir.getAbsolutePath());
         }
         return dir;
+    }
+
+    private String sanitizePathSegment(String value) {
+        if (StringUtils.isBlank(value)) {
+            return "unknown";
+        }
+        return value.replaceAll("[\\\\/:*?\"<>|]", "_");
     }
 
     private File resolveUploadBaseDir() {
@@ -688,9 +739,61 @@ public class QuestionImportTaskServiceImpl implements QuestionImportTaskService 
             if (now - task.getCreateTime() > TASK_TTL_MS) {
                 deleteTempFile(task.getTempFile());
                 deleteTempFile(task.getAnswerTempFile());
+                deleteTaskWorkspace(task);
                 iterator.remove();
             }
         }
+    }
+
+    private void deleteTaskWorkspace(QuestionImportTask task) {
+        if (task == null) {
+            return;
+        }
+        File taskDir = resolveTaskWorkspaceDir(task);
+        if (taskDir == null || !taskDir.exists()) {
+            return;
+        }
+        deleteDirectory(taskDir);
+        File userDir = taskDir.getParentFile();
+        if (userDir != null && userDir.exists() && isDirectoryEmpty(userDir)) {
+            deleteDirectory(userDir);
+        }
+    }
+
+    private File resolveTaskWorkspaceDir(QuestionImportTask task) {
+        if (StringUtils.isAnyBlank(task.getUserId(), task.getTaskId())) {
+            File tempFile = task.getTempFile();
+            return tempFile == null ? null : tempFile.getParentFile();
+        }
+        return new File(new File(resolveAiImportRootDir(), sanitizePathSegment(task.getUserId())),
+                sanitizePathSegment(task.getTaskId()));
+    }
+
+    private void deleteDirectory(File dir) {
+        if (dir == null || !dir.exists()) {
+            return;
+        }
+        File[] children = dir.listFiles();
+        if (children != null) {
+            for (File child : children) {
+                if (child.isDirectory()) {
+                    deleteDirectory(child);
+                } else if (!child.delete()) {
+                    child.deleteOnExit();
+                }
+            }
+        }
+        if (!dir.delete()) {
+            dir.deleteOnExit();
+        }
+    }
+
+    private boolean isDirectoryEmpty(File dir) {
+        if (dir == null || !dir.isDirectory()) {
+            return false;
+        }
+        File[] children = dir.listFiles();
+        return children == null || children.length == 0;
     }
 
     private String buildPartialCompletedMessage(QuestionImportTask task, int questionCount, int failedCount) {

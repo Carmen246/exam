@@ -15,8 +15,7 @@ public class SysAiConfig extends Model<SysAiConfig> {
 
     private static final long serialVersionUID = 1L;
 
-    public static final String DEFAULT_ID = "1";
-
+    /** 主键使用用户 ID，每位管理员一条 AI 配置 */
     @TableId(value = "id", type = IdType.INPUT)
     private String id;
 

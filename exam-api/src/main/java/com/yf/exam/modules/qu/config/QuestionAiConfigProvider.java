@@ -60,6 +60,9 @@ public class QuestionAiConfigProvider {
     }
 
     private void mergeDbConfig(QuestionAiProperties target, SysAiConfig dbConfig) {
+        if (dbConfig == null) {
+            return;
+        }
         if (StringUtils.isNotBlank(dbConfig.getProvider())) {
             target.setProvider(dbConfig.getProvider());
         }
@@ -116,7 +119,15 @@ public class QuestionAiConfigProvider {
         if (draft.getTimeoutSeconds() != null) {
             target.setTimeoutSeconds(draft.getTimeoutSeconds());
         }
-        target.setApiKey(resolveDraftSecret(draft.getApiKey(), dbConfig.getApiKey()));
+        String savedApiKey = dbConfig == null ? null : dbConfig.getApiKey();
+        target.setApiKey(resolveDraftSecret(draft.getApiKey(), savedApiKey));
+        String savedRagflowApiKey = dbConfig == null ? null : dbConfig.getRagflowApiKey();
+        if (StringUtils.isNotBlank(draft.getRagflowApiKey())
+                && !com.yf.exam.modules.sys.config.dto.SysAiConfigDTO.MASKED_SECRET.equals(draft.getRagflowApiKey())) {
+            target.setRagflowApiKey(draft.getRagflowApiKey().trim());
+        } else if (StringUtils.isNotBlank(savedRagflowApiKey)) {
+            target.setRagflowApiKey(savedRagflowApiKey);
+        }
     }
 
     private String resolveDraftSecret(String incoming, String saved) {

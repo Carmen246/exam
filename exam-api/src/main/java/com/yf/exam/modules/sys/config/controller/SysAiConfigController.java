@@ -5,8 +5,8 @@ import com.yf.exam.core.api.controller.BaseController;
 import com.yf.exam.core.api.dto.BaseIdRespDTO;
 import com.yf.exam.modules.qu.service.QuestionAiParseService;
 import com.yf.exam.modules.sys.config.dto.SysAiConfigDTO;
-import com.yf.exam.modules.sys.config.entity.SysAiConfig;
 import com.yf.exam.modules.sys.config.service.SysAiConfigService;
+import com.yf.exam.modules.user.UserUtils;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import org.apache.shiro.authz.annotation.RequiresRoles;
@@ -39,7 +39,7 @@ public class SysAiConfigController extends BaseController {
     @RequestMapping(value = "/save", method = {RequestMethod.POST})
     public ApiRest<BaseIdRespDTO> save(@RequestBody SysAiConfigDTO reqDTO) {
         sysAiConfigService.saveConfig(reqDTO);
-        return success(new BaseIdRespDTO(SysAiConfig.DEFAULT_ID));
+        return success(new BaseIdRespDTO(UserUtils.getUserId()));
     }
 
     @RequiresRoles("sa")

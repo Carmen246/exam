@@ -16,4 +16,7 @@ public class QuestionImportReqDTO implements Serializable {
 
     @ApiModelProperty("确认导入的试题列表")
     private List<QuDetailDTO> questions;
+
+    @ApiModelProperty("AI 导入任务 ID（用于校验任务归属）")
+    private String taskId;
 }

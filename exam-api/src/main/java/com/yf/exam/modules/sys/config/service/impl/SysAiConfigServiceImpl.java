@@ -2,10 +2,12 @@ package com.yf.exam.modules.sys.config.service.impl;
 
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.yf.exam.core.exception.ServiceException;
+import com.yf.exam.modules.qu.config.AiUserContext;
 import com.yf.exam.modules.sys.config.dto.SysAiConfigDTO;
 import com.yf.exam.modules.sys.config.entity.SysAiConfig;
 import com.yf.exam.modules.sys.config.mapper.SysAiConfigMapper;
 import com.yf.exam.modules.sys.config.service.SysAiConfigService;
+import com.yf.exam.modules.user.UserUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
@@ -24,12 +26,24 @@ public class SysAiConfigServiceImpl extends ServiceImpl<SysAiConfigMapper, SysAi
 
     @Override
     public SysAiConfig getEntity() {
-        return getOrCreateEntity();
+        return findSavedEntity(resolveUserId());
+    }
+
+    @Override
+    public SysAiConfig getEntityForUser(String userId) {
+        if (StringUtils.isBlank(userId)) {
+            throw new ServiceException("用户 ID 不能为空");
+        }
+        return findSavedEntity(userId);
     }
 
     @Override
     public SysAiConfigDTO findDetail() {
-        SysAiConfig entity = getOrCreateEntity();
+        String userId = resolveUserId();
+        SysAiConfig entity = findSavedEntity(userId);
+        if (entity == null) {
+            return buildEmptyDto(userId);
+        }
         return toDto(entity);
     }
 
@@ -39,7 +53,13 @@ public class SysAiConfigServiceImpl extends ServiceImpl<SysAiConfigMapper, SysAi
             throw new ServiceException("AI 配置不能为空");
         }
 
-        SysAiConfig entity = getOrCreateEntity();
+        String userId = resolveUserId();
+        SysAiConfig entity = findSavedEntity(userId);
+        boolean isNew = entity == null;
+        if (isNew) {
+            entity = buildDefaultEntity(userId);
+        }
+
         entity.setEnabled(true);
         entity.setProvider(trimToNull(reqDTO.getProvider()));
         entity.setBaseUrl(trimToNull(reqDTO.getBaseUrl()));
@@ -56,64 +76,84 @@ public class SysAiConfigServiceImpl extends ServiceImpl<SysAiConfigMapper, SysAi
         applySecretUpdate(entity::setRagflowApiKey, entity.getRagflowApiKey(), reqDTO.getRagflowApiKey());
 
         validateConfig(entity);
-        entity.setUpdateTime(new Date());
-        try {
-            saveOrUpdate(entity);
-        } catch (DataAccessException e) {
-            log.error("保存 sys_ai_config 失败：{}", e.getMessage(), e);
-            throw new ServiceException("AI 配置表不存在，请先执行数据库脚本：docs/安装资源/sys_ai_config.sql");
-        }
-        eventPublisher.publishEvent(new SysAiConfigChangedEvent(this));
-    }
 
-    SysAiConfig getOrCreateEntity() {
+        Date now = new Date();
+        entity.setUpdateTime(now);
+        if (isNew) {
+            entity.setCreateTime(now);
+        }
+
         try {
-            SysAiConfig entity = getById(SysAiConfig.DEFAULT_ID);
-            if (entity != null) {
-                if (!Boolean.TRUE.equals(entity.getEnabled())) {
-                    entity.setEnabled(true);
-                    entity.setUpdateTime(new Date());
-                    updateById(entity);
-                }
-                return entity;
+            if (isNew) {
+                save(entity);
+            } else {
+                updateById(entity);
             }
-
-            SysAiConfig created = buildDefaultEntity();
-            save(created);
-            return created;
         } catch (DataAccessException e) {
-            log.warn("读取 sys_ai_config 失败，可能尚未执行数据库脚本 docs/安装资源/sys_ai_config.sql：{}", e.getMessage());
-            return buildDefaultEntity();
+            log.error("保存 sys_ai_config 失败，userId={}：{}", userId, e.getMessage(), e);
+            throw new ServiceException("AI 配置保存失败，请确认已执行数据库脚本：docs/安装资源/sys_ai_config.sql");
+        }
+        eventPublisher.publishEvent(new SysAiConfigChangedEvent(this, userId));
+    }
+
+    private SysAiConfig findSavedEntity(String userId) {
+        if (StringUtils.isBlank(userId)) {
+            return null;
+        }
+        try {
+            return getById(userId);
+        } catch (DataAccessException e) {
+            log.warn("读取 sys_ai_config 失败，userId={}：{}", userId, e.getMessage());
+            return null;
         }
     }
 
-    private SysAiConfig buildDefaultEntity() {
+    private SysAiConfig buildDefaultEntity(String userId) {
         SysAiConfig created = new SysAiConfig();
-        created.setId(SysAiConfig.DEFAULT_ID);
+        created.setId(userId);
         created.setEnabled(true);
-        created.setCreateTime(new Date());
-        created.setUpdateTime(new Date());
         return created;
+    }
+
+    private SysAiConfigDTO buildEmptyDto(String userId) {
+        SysAiConfigDTO dto = new SysAiConfigDTO();
+        dto.setId(userId);
+        dto.setEnabled(true);
+        dto.setProvider("openai");
+        dto.setTimeoutSeconds(60);
+        dto.setApiKeyConfigured(false);
+        dto.setRagflowApiKeyConfigured(false);
+        dto.setRagflowAutoUpload(false);
+        dto.setRagflowUploadFailFast(false);
+        return dto;
+    }
+
+    private String resolveUserId() {
+        String contextUserId = AiUserContext.getUserId();
+        if (StringUtils.isNotBlank(contextUserId)) {
+            return contextUserId;
+        }
+        return UserUtils.getUserId();
     }
 
     private SysAiConfigDTO toDto(SysAiConfig entity) {
         SysAiConfigDTO dto = new SysAiConfigDTO();
         dto.setId(entity.getId());
         dto.setEnabled(true);
-        dto.setProvider(entity.getProvider());
+        dto.setProvider(StringUtils.defaultIfBlank(entity.getProvider(), "openai"));
         dto.setBaseUrl(entity.getBaseUrl());
         dto.setApiKeyConfigured(StringUtils.isNotBlank(entity.getApiKey()));
         dto.setApiKey(dto.getApiKeyConfigured() ? SysAiConfigDTO.MASKED_SECRET : "");
         dto.setChatId(entity.getChatId());
         dto.setModelName(entity.getModelName());
-        dto.setTimeoutSeconds(entity.getTimeoutSeconds());
+        dto.setTimeoutSeconds(entity.getTimeoutSeconds() == null ? 60 : entity.getTimeoutSeconds());
         dto.setRagflowBaseUrl(entity.getRagflowBaseUrl());
         dto.setRagflowApiKeyConfigured(StringUtils.isNotBlank(entity.getRagflowApiKey()));
         dto.setRagflowApiKey(dto.getRagflowApiKeyConfigured() ? SysAiConfigDTO.MASKED_SECRET : "");
         dto.setRagflowDatasetId(entity.getRagflowDatasetId());
         dto.setRagflowDatasetName(entity.getRagflowDatasetName());
-        dto.setRagflowAutoUpload(entity.getRagflowAutoUpload());
-        dto.setRagflowUploadFailFast(entity.getRagflowUploadFailFast());
+        dto.setRagflowAutoUpload(Boolean.TRUE.equals(entity.getRagflowAutoUpload()));
+        dto.setRagflowUploadFailFast(Boolean.TRUE.equals(entity.getRagflowUploadFailFast()));
         return dto;
     }
 

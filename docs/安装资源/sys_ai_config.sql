@@ -1,6 +1,7 @@
--- AI 配置表（已有数据库执行本脚本）
+-- 已有数据库升级：创建 AI 配置表（每位管理员一条，主键 id = 用户 ID）
+-- 新装系统请使用「数据库脚本.sql」，无需执行本文件。
 CREATE TABLE IF NOT EXISTS `sys_ai_config` (
-  `id` varchar(32) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'ID',
+  `id` varchar(64) COLLATE utf8mb4_general_ci NOT NULL COMMENT '用户ID',
   `enabled` tinyint(1) NOT NULL DEFAULT '1' COMMENT '是否启用数据库配置',
   `provider` varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '提供方 openai/ragflow',
   `base_url` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'API地址',
@@ -17,9 +18,7 @@ CREATE TABLE IF NOT EXISTS `sys_ai_config` (
   `create_time` datetime DEFAULT NULL COMMENT '创建时间',
   `update_time` datetime DEFAULT NULL COMMENT '更新时间',
   PRIMARY KEY (`id`) USING BTREE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='AI接口配置';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='AI接口配置（按用户）';
 
-INSERT INTO `sys_ai_config` (`id`, `enabled`, `create_time`, `update_time`)
-SELECT '1', 1, NOW(), NOW()
-FROM DUAL
-WHERE NOT EXISTS (SELECT 1 FROM `sys_ai_config` WHERE `id` = '1');
+-- 若此前已创建全局配置行 id='1'，可手动删除（不影响新逻辑）：
+-- DELETE FROM `sys_ai_config` WHERE `id` = '1';
