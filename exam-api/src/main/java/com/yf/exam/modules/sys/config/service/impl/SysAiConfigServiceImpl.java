@@ -63,17 +63,23 @@ public class SysAiConfigServiceImpl extends ServiceImpl<SysAiConfigMapper, SysAi
         entity.setEnabled(true);
         entity.setProvider(trimToNull(reqDTO.getProvider()));
         entity.setBaseUrl(trimToNull(reqDTO.getBaseUrl()));
-        entity.setChatId(trimToNull(reqDTO.getChatId()));
+        applyOptionalText(reqDTO.getChatId(), entity::setChatId);
         entity.setModelName(trimToNull(reqDTO.getModelName()));
         entity.setTimeoutSeconds(reqDTO.getTimeoutSeconds());
-        entity.setRagflowBaseUrl(trimToNull(reqDTO.getRagflowBaseUrl()));
-        entity.setRagflowDatasetId(trimToNull(reqDTO.getRagflowDatasetId()));
-        entity.setRagflowDatasetName(trimToNull(reqDTO.getRagflowDatasetName()));
-        entity.setRagflowAutoUpload(reqDTO.getRagflowAutoUpload());
-        entity.setRagflowUploadFailFast(reqDTO.getRagflowUploadFailFast());
+        applyOptionalText(reqDTO.getRagflowBaseUrl(), entity::setRagflowBaseUrl);
+        applyOptionalText(reqDTO.getRagflowDatasetId(), entity::setRagflowDatasetId);
+        applyOptionalText(reqDTO.getRagflowDatasetName(), entity::setRagflowDatasetName);
+        if (reqDTO.getRagflowAutoUpload() != null) {
+            entity.setRagflowAutoUpload(reqDTO.getRagflowAutoUpload());
+        }
+        if (reqDTO.getRagflowUploadFailFast() != null) {
+            entity.setRagflowUploadFailFast(reqDTO.getRagflowUploadFailFast());
+        }
 
         applySecretUpdate(entity::setApiKey, entity.getApiKey(), reqDTO.getApiKey());
-        applySecretUpdate(entity::setRagflowApiKey, entity.getRagflowApiKey(), reqDTO.getRagflowApiKey());
+        if (reqDTO.getRagflowApiKey() != null) {
+            applySecretUpdate(entity::setRagflowApiKey, entity.getRagflowApiKey(), reqDTO.getRagflowApiKey());
+        }
 
         validateConfig(entity);
 
@@ -178,6 +184,13 @@ public class SysAiConfigServiceImpl extends ServiceImpl<SysAiConfigMapper, SysAi
             return;
         }
         setter.accept(incomingValue.trim());
+    }
+
+    private void applyOptionalText(String incoming, java.util.function.Consumer<String> setter) {
+        if (incoming == null) {
+            return;
+        }
+        setter.accept(trimToNull(incoming));
     }
 
     private String trimToNull(String value) {

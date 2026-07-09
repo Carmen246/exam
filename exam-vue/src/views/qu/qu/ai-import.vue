@@ -834,6 +834,10 @@ export default {
         this.$message.warning('没有可导入的试题')
         return
       }
+      if (!this.taskId) {
+        this.$message.warning('导入任务已失效，请重新发起 AI 导入')
+        return
+      }
 
       this.importLoading = true
       const importQuestions = this.questions.map(item => {
@@ -844,6 +848,7 @@ export default {
       })
 
       confirmQuestionImport({
+        taskId: this.taskId,
         questions: importQuestions
       }).then(res => {
         const count = res.data && res.data.count ? res.data.count : importQuestions.length
